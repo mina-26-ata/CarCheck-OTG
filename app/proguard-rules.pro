@@ -1,0 +1,5 @@
+-keepattributes Signature
+-keepattributes *Annotation*
+-keep class com.carchecker.otg.model.** { *; }
+-keep class com.carchecker.otg.data.dtc.** { *; }
+-keep class com.hoho.android.usbserial.** { *; }

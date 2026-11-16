@@ -287,8 +287,6 @@ fun DashboardScreen(
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         if (report != null) {
-                            val healthRating = TelemetryEvaluator.rateHealthScore(report.healthScore)
-                            val healthCol = telemetryRatingColor(healthRating.level)
                             HealthScoreGauge(
                                 score = report.healthScore,
                                 label = strings.healthScoreLabel,
@@ -309,13 +307,14 @@ fun DashboardScreen(
                                     else -> CockpitColors.CriticalRed
                                 }
                             )
-                            StatusPill(
-                                text = if (isAr) healthRating.labelAr else healthRating.labelEn,
-                                color = healthCol
-                            )
                         } else {
                             StatusPill(
-                                text = if (isConnected) strings.connectedSim else strings.disconnected,
+                                text = when (state.connectionMode) {
+                                    ConnectionMode.USB_OTG -> strings.connectedOtg
+                                    ConnectionMode.BLUETOOTH -> strings.connectedBluetooth
+                                    ConnectionMode.SIMULATION -> strings.connectedSim
+                                    ConnectionMode.DISCONNECTED -> strings.disconnected
+                                },
                                 color = if (isConnected) CockpitColors.HealthyGreen else CockpitColors.WarningAmber
                             )
                             Text(

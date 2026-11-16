@@ -68,15 +68,6 @@ object TelemetryEvaluator {
         }
     }
 
-    fun rateFaultCount(faultCount: Int?): TelemetryRating? {
-        faultCount ?: return null
-        return when {
-            faultCount == 0 -> rating(TelemetryRatingLevel.EXCELLENT)
-            faultCount in 1..2 -> rating(TelemetryRatingLevel.FAIR)
-            else -> rating(TelemetryRatingLevel.POOR)
-        }
-    }
-
     fun rateHealthScore(score: Int): TelemetryRating = when {
         score >= 90 -> rating(TelemetryRatingLevel.EXCELLENT)
         score >= 75 -> rating(TelemetryRatingLevel.GOOD)

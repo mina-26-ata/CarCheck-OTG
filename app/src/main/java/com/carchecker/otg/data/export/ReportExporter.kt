@@ -8,6 +8,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.carchecker.otg.model.AppLanguage
 import com.carchecker.otg.model.FullScanReport
+import com.carchecker.otg.ui.components.dtcStatusLabel
+import com.carchecker.otg.ui.components.observationSeverityLabel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -35,7 +37,7 @@ object ReportExporter {
                 appendLine()
                 appendLine("--- الملاحظات والتحليل الذكي (${report.observations.size}) ---")
                 report.observations.forEachIndexed { idx, obs ->
-                    appendLine("${idx + 1}. [${obs.severity}] ${obs.titleAr}")
+                    appendLine("${idx + 1}. [${observationSeverityLabel(obs.severity, true)}] ${obs.titleAr}")
                     appendLine("   التفاصيل: ${obs.summaryAr}")
                     if (!obs.measuredValue.isNullOrBlank()) {
                         appendLine("   القراءة: ${obs.measuredValue} (الطبيعي: ${obs.normalRange ?: "-"})")
@@ -49,7 +51,7 @@ object ReportExporter {
                     appendLine("لا توجد أكواد أعطال مسجلة.")
                 } else {
                     report.dtcs.forEach { dtc ->
-                        appendLine("• ${dtc.code} (${dtc.status}) — ${dtc.knowledge.titleAr}")
+                        appendLine("• ${dtc.code} (${dtcStatusLabel(dtc.status, true)}) — ${dtc.knowledge.titleAr}")
                         appendLine("  الوحدة: ${dtc.ecuNameAr} (${dtc.ecuAddress})")
                         appendLine("  الشرح: ${dtc.knowledge.descriptionAr}")
                         appendLine("  خطوات الإصلاح:")
@@ -158,13 +160,14 @@ object ReportExporter {
         fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
         val obsHtml = report.observations.joinToString("") { obs ->
+            val sevLabel = esc(observationSeverityLabel(obs.severity, isAr))
             val title = esc(if (isAr) obs.titleAr else obs.titleEn)
             val sum = esc(if (isAr) obs.summaryAr else obs.summaryEn)
             val steps = (if (isAr) obs.resolutionStepsAr else obs.resolutionStepsEn)
                 .joinToString("") { "<li>${esc(it)}</li>" }
             """
             <div class="card">
-              <div class="badge">${obs.severity}</div>
+              <div class="badge">$sevLabel</div>
               <h3>$title</h3>
               <p>$sum</p>
               <ul>$steps</ul>
@@ -176,13 +179,14 @@ object ReportExporter {
             "<p>${if (isAr) "لا توجد أعطال مسجلة." else "No trouble codes detected."}</p>"
         } else {
             report.dtcs.joinToString("") { dtc ->
+                val statLabel = esc(dtcStatusLabel(dtc.status, isAr))
                 val title = esc(if (isAr) dtc.knowledge.titleAr else dtc.knowledge.titleEn)
                 val desc = esc(if (isAr) dtc.knowledge.descriptionAr else dtc.knowledge.descriptionEn)
                 val steps = (if (isAr) dtc.knowledge.fixStepsAr else dtc.knowledge.fixStepsEn)
                     .joinToString("") { "<li>${esc(it)}</li>" }
                 """
                 <div class="card">
-                  <strong>${esc(dtc.code)}</strong> (${dtc.status}) — $title
+                  <strong>${esc(dtc.code)}</strong> ($statLabel) — $title
                   <p>$desc</p>
                   <ul>$steps</ul>
                 </div>

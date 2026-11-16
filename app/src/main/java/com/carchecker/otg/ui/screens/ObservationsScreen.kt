@@ -53,6 +53,7 @@ import com.carchecker.otg.ui.components.CockpitCard
 import com.carchecker.otg.ui.components.SectionHeader
 import com.carchecker.otg.ui.components.StatusPill
 import com.carchecker.otg.ui.components.observationSeverityColor
+import com.carchecker.otg.ui.components.observationSeverityLabel
 import com.carchecker.otg.ui.i18n.AppStrings
 import com.carchecker.otg.ui.state.DiagnosticUiState
 import com.carchecker.otg.ui.theme.CockpitColors
@@ -463,7 +464,7 @@ fun ObservationsScreen(
                         modifier = Modifier.weight(1f)
                     )
                     Spacer(Modifier.width(8.dp))
-                    StatusPill(text = obs.severity.name, color = col)
+                    StatusPill(text = observationSeverityLabel(obs.severity, isAr), color = col)
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -572,11 +573,12 @@ fun ObservationsScreen(
                                 modifier = Modifier.padding(10.dp),
                                 verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
+                                val kmUnit = if (isAr) "كم" else "km"
                                 readiness.distanceWithMilKm?.let {
-                                    ReadinessStatRow(strings.distWithMilLabel, "$it km")
+                                    ReadinessStatRow(strings.distWithMilLabel, "$it $kmUnit")
                                 }
                                 readiness.distanceSinceClearKm?.let {
-                                    ReadinessStatRow(strings.distSinceClearLabel, "$it km")
+                                    ReadinessStatRow(strings.distSinceClearLabel, "$it $kmUnit")
                                 }
                                 readiness.warmupsSinceClear?.let {
                                     ReadinessStatRow(strings.warmupsLabel, "$it")

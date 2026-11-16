@@ -56,6 +56,7 @@ import com.carchecker.otg.ui.components.CockpitCard
 import com.carchecker.otg.ui.components.ScanHistoryItemCard
 import com.carchecker.otg.ui.components.SectionHeader
 import com.carchecker.otg.ui.components.StatusPill
+import com.carchecker.otg.ui.components.localizeCountry
 import com.carchecker.otg.ui.i18n.AppStrings
 import com.carchecker.otg.ui.state.DiagnosticUiState
 import com.carchecker.otg.ui.theme.CockpitColors
@@ -101,14 +102,19 @@ fun VehicleAndSettingsScreen(
                 } else {
                     InfoRow(strings.vinLabel, v.vin ?: "-")
                     InfoRow(strings.makeLabel, v.make ?: "-")
-                    InfoRow(strings.countryLabel, v.country ?: "-")
+                    InfoRow(strings.countryLabel, localizeCountry(v.country, isAr) ?: "-")
                     InfoRow(strings.yearLabel, v.modelYear?.toString() ?: "-")
                     InfoRow(strings.protocolLabel, v.protocolName ?: "-")
                     InfoRow(strings.calidLabel, v.calibrationId ?: "-")
                     InfoRow(strings.cvnLabel, v.cvn ?: "-")
                     v.odometerKm?.let {
-                        val odo = if (state.settings.unit == MeasurementUnit.METRIC) "${it.toInt()} km" else "${(it * 0.621371).toInt()} mi"
-                        InfoRow(strings.odometerLabel, odo)
+                        val unitText = if (state.settings.unit == MeasurementUnit.METRIC) {
+                            if (isAr) "كم" else "km"
+                        } else {
+                            if (isAr) "ميل" else "mi"
+                        }
+                        val distVal = if (state.settings.unit == MeasurementUnit.METRIC) it.toInt() else (it * 0.621371).toInt()
+                        InfoRow(strings.odometerLabel, "$distVal $unitText")
                     }
 
                     if (v.detectedEcus.isNotEmpty()) {
@@ -247,7 +253,7 @@ fun VehicleAndSettingsScreen(
                     OutlinedTextField(
                         value = modelDraft,
                         onValueChange = { modelDraft = it },
-                        label = { Text("Model") },
+                        label = { Text(if (isAr) "اسم النموذج" else "Model") },
                         singleLine = true,
                         modifier = Modifier.weight(1f)
                     )

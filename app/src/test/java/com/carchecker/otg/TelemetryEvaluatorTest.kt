@@ -2,7 +2,16 @@ package com.carchecker.otg
 
 import com.carchecker.otg.domain.analyzer.TelemetryEvaluator
 import com.carchecker.otg.domain.analyzer.TelemetryRatingLevel
+import com.carchecker.otg.model.DtcSeverity
+import com.carchecker.otg.model.DtcStatus
+import com.carchecker.otg.model.DtcSystem
 import com.carchecker.otg.model.MeasurementUnit
+import com.carchecker.otg.model.ObservationSeverity
+import com.carchecker.otg.ui.components.dtcSeverityLabel
+import com.carchecker.otg.ui.components.dtcStatusLabel
+import com.carchecker.otg.ui.components.dtcSystemLabel
+import com.carchecker.otg.ui.components.localizeCountry
+import com.carchecker.otg.ui.components.observationSeverityLabel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -36,19 +45,29 @@ class TelemetryEvaluatorTest {
     }
 
     @Test
-    fun rateBatteryFaultsAndHealthScore_gradeCorrectly() {
+    fun rateBatteryAndHealthScore_gradeCorrectly() {
         assertEquals(TelemetryRatingLevel.EXCELLENT, TelemetryEvaluator.rateBatteryVoltage(13.9)?.level)
         assertEquals(TelemetryRatingLevel.GOOD, TelemetryEvaluator.rateBatteryVoltage(12.3)?.level)
         assertEquals(TelemetryRatingLevel.FAIR, TelemetryEvaluator.rateBatteryVoltage(11.9)?.level)
         assertEquals(TelemetryRatingLevel.POOR, TelemetryEvaluator.rateBatteryVoltage(11.2)?.level)
 
-        assertEquals(TelemetryRatingLevel.EXCELLENT, TelemetryEvaluator.rateFaultCount(0)?.level)
-        assertEquals(TelemetryRatingLevel.FAIR, TelemetryEvaluator.rateFaultCount(1)?.level)
-        assertEquals(TelemetryRatingLevel.POOR, TelemetryEvaluator.rateFaultCount(6)?.level)
-
         assertEquals(TelemetryRatingLevel.EXCELLENT, TelemetryEvaluator.rateHealthScore(95).level)
         assertEquals(TelemetryRatingLevel.GOOD, TelemetryEvaluator.rateHealthScore(82).level)
         assertEquals(TelemetryRatingLevel.FAIR, TelemetryEvaluator.rateHealthScore(60).level)
         assertEquals(TelemetryRatingLevel.POOR, TelemetryEvaluator.rateHealthScore(19).level)
+    }
+
+    @Test
+    fun arabicLocalizationHelpers_returnArabicLabelsWithoutEnglishEnumNames() {
+        assertEquals("دائم", dtcStatusLabel(DtcStatus.PERMANENT, isAr = true))
+        assertEquals("مؤكد", dtcStatusLabel(DtcStatus.CONFIRMED, isAr = true))
+        assertEquals("معلّق", dtcStatusLabel(DtcStatus.PENDING, isAr = true))
+        assertEquals("حرج", dtcSeverityLabel(DtcSeverity.CRITICAL, isAr = true))
+        assertEquals("عالٍ", dtcSeverityLabel(DtcSeverity.HIGH, isAr = true))
+        assertEquals("حرج", observationSeverityLabel(ObservationSeverity.CRITICAL, isAr = true))
+        assertEquals("تحذير", observationSeverityLabel(ObservationSeverity.WARNING, isAr = true))
+        assertEquals("المحرك والقير", dtcSystemLabel(DtcSystem.POWERTRAIN, isAr = true))
+        assertEquals("الشاصي والفرامل", dtcSystemLabel(DtcSystem.CHASSIS, isAr = true))
+        assertEquals("اليابان", localizeCountry("Japan", isAr = true))
     }
 }

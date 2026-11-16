@@ -39,6 +39,7 @@ import com.carchecker.otg.model.FreezeFrameReading
 import com.carchecker.otg.model.VehicleBodyStyle
 import com.carchecker.otg.ui.components.MiniCarZoneLocator
 import com.carchecker.otg.ui.components.StatusPill
+import com.carchecker.otg.ui.components.dtcSeverityLabel
 import com.carchecker.otg.ui.components.severityColor
 import com.carchecker.otg.ui.i18n.AppStrings
 import com.carchecker.otg.ui.theme.CockpitColors
@@ -88,7 +89,7 @@ fun FaultDetailSheet(
                         color = sevColor,
                         fontWeight = FontWeight.ExtraBold
                     )
-                    StatusPill(text = knowledge.severity.name, color = sevColor)
+                    StatusPill(text = dtcSeverityLabel(knowledge.severity, isAr), color = sevColor)
                     if (!statusLabel.isNullOrBlank()) {
                         StatusPill(text = statusLabel, color = CockpitColors.InfoBlue)
                     }

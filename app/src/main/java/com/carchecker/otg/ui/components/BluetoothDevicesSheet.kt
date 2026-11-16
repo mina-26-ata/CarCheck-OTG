@@ -271,16 +271,16 @@ fun BluetoothDevicesBottomSheet(
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         val modeText = when (dev.transportType) {
-                                            BluetoothTransportType.BLE_GATT -> "BLE 4.0+"
-                                            BluetoothTransportType.CLASSIC_SPP -> "Classic SPP"
-                                            BluetoothTransportType.DUAL -> "Classic + BLE"
+                                            BluetoothTransportType.BLE_GATT -> if (isAr) "بلوتوث ذكي 4.0+" else "BLE 4.0+"
+                                            BluetoothTransportType.CLASSIC_SPP -> if (isAr) "بلوتوث كلاسيكي" else "Classic SPP"
+                                            BluetoothTransportType.DUAL -> if (isAr) "مزدوج (كلاسيكي + ذكي)" else "Classic + BLE"
                                         }
                                         val meta = buildString {
                                             append(modeText)
                                             append(" • ")
                                             append(dev.address)
                                             if (dev.rssi != null) {
-                                                append(" • ${dev.rssi} dBm")
+                                                append(if (isAr) " • قوة الإشارة ${dev.rssi}" else " • ${dev.rssi} dBm")
                                             }
                                         }
                                         Text(

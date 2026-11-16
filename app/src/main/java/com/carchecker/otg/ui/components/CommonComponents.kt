@@ -29,6 +29,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.carchecker.otg.model.DtcSeverity
+import com.carchecker.otg.model.DtcStatus
+import com.carchecker.otg.model.DtcSystem
 import com.carchecker.otg.model.ObservationSeverity
 import com.carchecker.otg.ui.theme.CockpitColors
 
@@ -187,4 +189,70 @@ fun observationSeverityColor(sev: ObservationSeverity): Color = when (sev) {
     ObservationSeverity.WARNING -> CockpitColors.WarningAmber
     ObservationSeverity.INFO -> CockpitColors.InfoBlue
     ObservationSeverity.GOOD -> CockpitColors.HealthyGreen
+}
+
+fun dtcStatusLabel(status: DtcStatus, isAr: Boolean): String = when (status) {
+    DtcStatus.CONFIRMED -> if (isAr) "مؤكد" else "Confirmed"
+    DtcStatus.PENDING -> if (isAr) "معلّق" else "Pending"
+    DtcStatus.PERMANENT -> if (isAr) "دائم" else "Permanent"
+    DtcStatus.STORED_UDS -> if (isAr) "مخزّن بالوحدة" else "Stored (UDS)"
+}
+
+fun dtcSeverityLabel(sev: DtcSeverity, isAr: Boolean): String = when (sev) {
+    DtcSeverity.CRITICAL -> if (isAr) "حرج" else "Critical"
+    DtcSeverity.HIGH -> if (isAr) "عالٍ" else "High"
+    DtcSeverity.MODERATE -> if (isAr) "متوسط" else "Moderate"
+    DtcSeverity.LOW -> if (isAr) "منخفض" else "Low"
+    DtcSeverity.INFO -> if (isAr) "معلومة" else "Info"
+}
+
+fun dtcSystemLabel(system: DtcSystem, isAr: Boolean): String = when (system) {
+    DtcSystem.POWERTRAIN -> if (isAr) "المحرك والقير" else "Powertrain (P)"
+    DtcSystem.CHASSIS -> if (isAr) "الشاصي والفرامل" else "Chassis (C)"
+    DtcSystem.BODY -> if (isAr) "الهيكل والمقصورة" else "Body (B)"
+    DtcSystem.NETWORK -> if (isAr) "الشبكة والاتصال" else "Network (U)"
+}
+
+fun observationSeverityLabel(sev: ObservationSeverity, isAr: Boolean): String = when (sev) {
+    ObservationSeverity.CRITICAL -> if (isAr) "حرج" else "Critical"
+    ObservationSeverity.WARNING -> if (isAr) "تحذير" else "Warning"
+    ObservationSeverity.INFO -> if (isAr) "ملاحظة" else "Info"
+    ObservationSeverity.GOOD -> if (isAr) "جيد" else "Good"
+}
+
+fun localizeCountry(country: String?, isAr: Boolean): String? {
+    if (!isAr || country.isNullOrBlank()) return country
+    return when (country) {
+        "United States" -> "الولايات المتحدة"
+        "Canada" -> "كندا"
+        "Mexico" -> "المكسيك"
+        "Australia" -> "أستراليا"
+        "Brazil / South America" -> "البرازيل / أمريكا الجنوبية"
+        "Japan" -> "اليابان"
+        "South Korea" -> "كوريا الجنوبية"
+        "China" -> "الصين"
+        "India" -> "الهند"
+        "Indonesia" -> "إندونيسيا"
+        "Thailand" -> "تايلاند"
+        "Asia" -> "آسيا"
+        "United Kingdom" -> "المملكة المتحدة"
+        "Czech Republic" -> "التشيك"
+        "France" -> "فرنسا"
+        "Spain" -> "إسبانيا"
+        "Germany" -> "ألمانيا"
+        "Sweden" -> "السويد"
+        "Northern Europe" -> "شمال أوروبا"
+        "Italy" -> "إيطاليا"
+        "Europe" -> "أوروبا"
+        else -> country
+    }
+}
+
+fun localizeAdapterLabel(raw: String, isAr: Boolean): String {
+    if (!isAr || raw.isBlank()) return raw
+    return raw
+        .replace("Simulator: 2022 Toyota Camry (Healthy)", "محاكي: تويوتا كامري 2022 (سليمة)")
+        .replace("Simulator: 2019 Hyundai Elantra (Misfire & Fuel Trim)", "محاكي: هيونداي إلنترا 2019 (تفتفة وخلط وقود)")
+        .replace("Simulator: 2017 Ford Explorer (Cooling / Trans / ABS)", "محاكي: فورد إكسبلورر 2017 (حرارة / قير / فرامل)")
+        .replace("Simulator:", "محاكي السيارة:")
 }

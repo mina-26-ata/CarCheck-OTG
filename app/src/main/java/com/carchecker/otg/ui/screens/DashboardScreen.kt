@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.BluetoothConnected
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Error
 import androidx.compose.material.icons.rounded.History
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Usb
+import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -79,9 +81,12 @@ import com.carchecker.otg.ui.components.ScanHistoryBottomSheet
 import com.carchecker.otg.ui.components.SectionHeader
 import com.carchecker.otg.ui.components.StatusPill
 import com.carchecker.otg.ui.components.TripleTelemetryGauges
+import com.carchecker.otg.ui.components.dtcStatusLabel
 import com.carchecker.otg.ui.components.formatScanTimestamp
 import com.carchecker.otg.ui.components.formatVehicleDisplayName
+import com.carchecker.otg.ui.components.localizeAdapterLabel
 import com.carchecker.otg.ui.components.observationSeverityColor
+import com.carchecker.otg.ui.components.observationSeverityLabel
 import com.carchecker.otg.ui.i18n.AppStrings
 import com.carchecker.otg.ui.state.DiagnosticUiState
 import com.carchecker.otg.ui.theme.CockpitColors
@@ -238,8 +243,39 @@ fun DashboardScreen(
                             label = strings.faultsCountLabel,
                             value = faultCount?.toString() ?: "--",
                             valueColor = if (faultCount == 0 && report != null) CockpitColors.HealthyGreen else if ((faultCount ?: 0) > 0) CockpitColors.CriticalRed else CockpitColors.TextSecondary,
-                            rating = TelemetryEvaluator.rateFaultCount(faultCount),
-                            isAr = isAr
+                            rating = null,
+                            isAr = isAr,
+                            trailingAlertIcon = when {
+                                faultCount == null -> null
+                                faultCount > 0 -> {
+                                    {
+                                        Surface(
+                                            color = CockpitColors.CriticalRed.copy(alpha = 0.16f),
+                                            shape = RoundedCornerShape(6.dp),
+                                            border = BorderStroke(0.8.dp, CockpitColors.CriticalRed.copy(alpha = 0.55f))
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Warning,
+                                                contentDescription = null,
+                                                tint = CockpitColors.CriticalRed,
+                                                modifier = Modifier
+                                                    .padding(horizontal = 5.dp, vertical = 2.dp)
+                                                    .size(14.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                else -> {
+                                    {
+                                        Icon(
+                                            imageVector = Icons.Rounded.CheckCircle,
+                                            contentDescription = null,
+                                            tint = CockpitColors.HealthyGreen,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
                         )
                     }
 
@@ -388,7 +424,11 @@ fun DashboardScreen(
                         )
                         Column {
                             Text(
-                                text = if (state.activeAdapterLabel.isNotBlank()) state.activeAdapterLabel else strings.connectionTitle,
+                                text = if (state.activeAdapterLabel.isNotBlank()) {
+                                    localizeAdapterLabel(state.activeAdapterLabel, isAr)
+                                } else {
+                                    strings.connectionTitle
+                                },
                                 style = MaterialTheme.typography.titleMedium,
                                 color = CockpitColors.TextPrimary,
                                 maxLines = 1,
@@ -769,7 +809,7 @@ fun DashboardScreen(
                                 color = CockpitColors.CriticalRed,
                                 fontWeight = FontWeight.ExtraBold
                             )
-                            StatusPill(text = dtc.status.name, color = CockpitColors.WarningAmber)
+                            StatusPill(text = dtcStatusLabel(dtc.status, isAr), color = CockpitColors.WarningAmber)
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -821,7 +861,7 @@ fun DashboardScreen(
                                 modifier = Modifier.weight(1f)
                             )
                             Spacer(Modifier.width(8.dp))
-                            StatusPill(text = obs.severity.name, color = col)
+                            StatusPill(text = observationSeverityLabel(obs.severity, isAr), color = col)
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -852,7 +892,8 @@ private fun TelemetryReadoutLine(
     value: String,
     valueColor: Color,
     rating: TelemetryRating?,
-    isAr: Boolean
+    isAr: Boolean,
+    trailingAlertIcon: (@Composable () -> Unit)? = null
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -879,7 +920,9 @@ private fun TelemetryReadoutLine(
                 color = valueColor,
                 maxLines = 1
             )
-            if (rating != null) {
+            if (trailingAlertIcon != null) {
+                trailingAlertIcon()
+            } else if (rating != null) {
                 val badgeColor = telemetryRatingColor(rating.level)
                 Surface(
                     color = badgeColor.copy(alpha = 0.16f),

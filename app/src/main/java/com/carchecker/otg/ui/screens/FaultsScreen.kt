@@ -48,6 +48,9 @@ import com.carchecker.otg.model.DtcSystem
 import com.carchecker.otg.ui.components.CockpitCard
 import com.carchecker.otg.ui.components.SectionHeader
 import com.carchecker.otg.ui.components.StatusPill
+import com.carchecker.otg.ui.components.dtcSeverityLabel
+import com.carchecker.otg.ui.components.dtcStatusLabel
+import com.carchecker.otg.ui.components.dtcSystemLabel
 import com.carchecker.otg.ui.components.severityColor
 import com.carchecker.otg.ui.i18n.AppStrings
 import com.carchecker.otg.ui.state.DiagnosticUiState
@@ -107,7 +110,7 @@ fun FaultsScreen(
         FaultDetailSheet(
             knowledge = dtc.knowledge,
             ecuLabel = "${if (isAr) dtc.ecuNameAr else dtc.ecuNameEn} (${dtc.ecuAddress})",
-            statusLabel = dtc.status.name,
+            statusLabel = dtcStatusLabel(dtc.status, isAr),
             freezeFrame = report?.freezeFrame.orEmpty(),
             aiInsightText = onBuildFaultAiInsight(dtc.knowledge),
             language = state.settings.language,
@@ -121,7 +124,7 @@ fun FaultsScreen(
         FaultDetailSheet(
             knowledge = entry,
             ecuLabel = null,
-            statusLabel = entry.system.name,
+            statusLabel = dtcSystemLabel(entry.system, isAr),
             freezeFrame = emptyList(),
             aiInsightText = onBuildFaultAiInsight(entry),
             language = state.settings.language,
@@ -201,7 +204,7 @@ fun FaultsScreen(
                     FilterChip(
                         selected = state.librarySystemFilter == sys,
                         onClick = { onSearchLibrary(state.libraryQuery, sys) },
-                        label = { Text(sys.name) }
+                        label = { Text(dtcSystemLabel(sys, isAr)) }
                     )
                 }
             }
@@ -226,7 +229,7 @@ fun FaultsScreen(
                                 color = col,
                                 fontWeight = FontWeight.ExtraBold
                             )
-                            StatusPill(text = entry.system.name, color = col)
+                            StatusPill(text = dtcSystemLabel(entry.system, isAr), color = col)
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -296,7 +299,7 @@ fun FaultsScreen(
                                     color = col,
                                     fontWeight = FontWeight.ExtraBold
                                 )
-                                StatusPill(text = dtc.knowledge.severity.name, color = col)
+                                StatusPill(text = dtcSeverityLabel(dtc.knowledge.severity, isAr), color = col)
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(

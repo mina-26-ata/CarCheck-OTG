@@ -57,6 +57,7 @@ data class DiagnosticUiState(
     val smartAiReport: SmartAiReport? = null,
     val aiChatHistory: List<AiChatMessage> = emptyList(),
     val isLiveStreaming: Boolean = false,
+    val isResettingMil: Boolean = false,
     val libraryQuery: String = "",
     val librarySystemFilter: DtcSystem? = null,
     val libraryResults: List<DtcKnowledgeEntry> = emptyList(),
@@ -420,27 +421,60 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
 
     fun clearDtcs() {
         val transport = activeTransport ?: return
+        if (_uiState.value.isResettingMil || _uiState.value.scanProgress.isScanning) return
         viewModelScope.launch {
             val wasStreaming = _uiState.value.isLiveStreaming
             stopLiveStreaming()
-            val res = engine.clearDtcs(transport)
-            res.onSuccess {
-                _uiState.update {
-                    it.copy(
-                        toastMessage = if (it.settings.language == AppLanguage.AR) {
-                            "تم إرسال أمر إلغاء الأعطال وإطفاء لمبة الماكينة — جاري التحقق..."
+            _uiState.update { it.copy(isResettingMil = true) }
+            try {
+                val res = engine.forceTurnOffCheckEngine(transport)
+                res.onSuccess { outcome ->
+                    val isAr = _uiState.value.settings.language == AppLanguage.AR
+                    val message = when {
+                        outcome.milIsNowOff == true -> if (isAr) {
+                            "تم إطفاء لمبة تحذير المحرك بنجاح — جاري إعادة الفحص..."
                         } else {
-                            "Faults & Check Engine cleared — re-scanning vehicle..."
+                            "Check Engine Light turned OFF — re-scanning vehicle..."
                         }
-                    )
+                        outcome.engineRunningBlocked -> if (isAr) {
+                            "يرفض الكمبيوتر الإطفاء أثناء عمل المحرك — أطفئ المحرك واترك السويتش مفتوحاً (ON) ثم أعد المحاولة."
+                        } else {
+                            "ECU refused reset while engine is running — turn engine OFF with ignition ON and retry."
+                        }
+                        outcome.clearedConfirmed && outcome.milIsNowOff == false -> if (isAr) {
+                            "تم إرسال أوامر الإطفاء، لكن اللمبة ما زالت مضاءة لوجود عطل نشط مستمر."
+                        } else {
+                            "Reset commands accepted, but MIL remains ON due to an active fault condition."
+                        }
+                        outcome.clearedConfirmed -> if (isAr) {
+                            "تم إرسال أمر إطفاء اللمبة ومسح الأعطال — جاري التحقق..."
+                        } else {
+                            "Reset command sent — verifying via scan..."
+                        }
+                        else -> if (isAr) {
+                            "لم يؤكد الكمبيوتر إطفاء اللمبة. تأكد من فتح السويتش (ON) مع إطفاء المحرك وأعد المحاولة."
+                        } else {
+                            "ECU did not confirm reset. Ensure ignition is ON with engine OFF and try again."
+                        }
+                    }
+                    _uiState.update { it.copy(isResettingMil = false, toastMessage = message) }
+                    if (outcome.clearedConfirmed || outcome.milIsNowOff == true) {
+                        delay(450)
+                        runFullScan()
+                    } else if (wasStreaming) {
+                        startLiveStreaming()
+                    }
+                }.onFailure { err ->
+                    _uiState.update {
+                        it.copy(
+                            isResettingMil = false,
+                            toastMessage = err.localizedMessage ?: "Failed to reset Check Engine Light"
+                        )
+                    }
+                    if (wasStreaming) startLiveStreaming()
                 }
-                delay(450)
-                runFullScan()
-            }.onFailure { err ->
-                _uiState.update {
-                    it.copy(toastMessage = err.localizedMessage ?: "Failed to clear DTCs")
-                }
-                if (wasStreaming) startLiveStreaming()
+            } finally {
+                _uiState.update { it.copy(isResettingMil = false) }
             }
         }
     }

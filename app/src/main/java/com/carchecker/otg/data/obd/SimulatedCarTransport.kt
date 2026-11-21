@@ -89,7 +89,9 @@ class SimulatedCarTransport(
                     dtcsCleared = true
                     "44"
                 }
-                cmd == "14FFFFFF" -> {
+                cmd == "1003" -> "50 03"
+                cmd == "1001" -> "50 01"
+                cmd == "14FFFFFF" || cmd == "14FF00" -> {
                     dtcsCleared = true
                     "54"
                 }

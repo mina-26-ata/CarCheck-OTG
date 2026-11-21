@@ -9,6 +9,7 @@ import com.carchecker.otg.model.FreezeFrameReading
 import com.carchecker.otg.model.FullScanReport
 import com.carchecker.otg.model.LiveSensorReading
 import com.carchecker.otg.model.MeasurementUnit
+import com.carchecker.otg.model.MilResetResult
 import com.carchecker.otg.model.ReadinessSummary
 import com.carchecker.otg.model.ScanProgress
 import com.carchecker.otg.model.VehicleInfo
@@ -20,7 +21,16 @@ class ObdCommandEngine(
     private val analyzer: VehicleHealthAnalyzer
 ) {
 
-    private var isCanProtocol = true
+    private enum class ObdBusFamily {
+        CAN_11BIT,
+        CAN_29BIT,
+        KWP_2000,
+        LEGACY_OTHER
+    }
+
+    private var busFamily: ObdBusFamily = ObdBusFamily.CAN_11BIT
+    private val isCanProtocol: Boolean
+        get() = busFamily == ObdBusFamily.CAN_11BIT || busFamily == ObdBusFamily.CAN_29BIT
     private var supportedPidsCache: Set<String> = emptySet()
 
     suspend fun initializeAdapter(transport: ObdTransport): Result<String> {
@@ -43,7 +53,8 @@ class ObdCommandEngine(
         }
 
         val protoCode = transport.sendCommand("ATDPN", 1200L).getOrNull()?.trim()?.uppercase().orEmpty()
-        isCanProtocol = detectIsCan(protoCode, transport.sendCommand("ATDP", 1200L).getOrNull().orEmpty())
+        val protoName = transport.sendCommand("ATDP", 1200L).getOrNull().orEmpty()
+        busFamily = detectBusFamily(protoCode, protoName)
 
         // Discover all supported Mode 01 PIDs
         val supported = linkedSetOf<String>()
@@ -186,37 +197,180 @@ class ObdCommandEngine(
     }
 
     suspend fun clearDtcs(transport: ObdTransport): Result<Unit> {
-        if (isCanProtocol) {
-            transport.sendCommand("ATSH 7DF", 1000L)
-        }
-        val res = transport.sendCommand("04", 4500L)
-        val body = res.getOrElse { return Result.failure(it) }
-        var cleared = body.uppercase().contains("44") || !ObdResponseParser.isErrorOrEmpty(body)
+        val resetRes = forceTurnOffCheckEngine(transport)
+        return resetRes.fold(
+            onSuccess = { outcome ->
+                if (outcome.clearedConfirmed || outcome.milIsNowOff == true) {
+                    Result.success(Unit)
+                } else {
+                    Result.failure(IllegalStateException(outcome.rawDetail.ifBlank { "ECU did not confirm DTC clear" }))
+                }
+            },
+            onFailure = { Result.failure(it) }
+        )
+    }
 
-        // Fallback physical ECM clear on 7E0 if broadcast was not acknowledged cleanly
-        if (!cleared && isCanProtocol) {
-            transport.sendCommand("ATSH 7E0", 1000L)
-            val physBody = transport.sendCommand("04", 3500L).getOrNull().orEmpty()
-            cleared = physBody.uppercase().contains("44") || !ObdResponseParser.isErrorOrEmpty(physBody)
-        }
+    /**
+     * Multi-protocol deep Check Engine (MIL) & DTC clear sequence supporting:
+     * - CAN 11-bit: Broadcast Mode 04 + Physical ECM 7E0 Mode 04 + UDS Extended Session (10 03)
+     *   followed by ClearDiagnosticInformation (14 FF FF FF) across ECM/TCM/Hybrid/ABS/Cluster
+     * - CAN 29-bit: Functional 18DB33F1 Mode 04 + Physical 18DA10F1 Mode 04 / UDS 14 FF FF FF
+     * - KWP2000 (ISO 14230-4): Mode 04 + KWP ClearDiagnosticInformation (14 FF 00)
+     * - Legacy ISO 9141-2 / J1850: Standard Mode 04 with wake retry
+     * Followed by live Mode 01 PID 01 verification of the MIL status bit.
+     */
+    suspend fun forceTurnOffCheckEngine(transport: ObdTransport): Result<MilResetResult> {
+        return try {
+            val clearedPaths = linkedSetOf<String>()
+            var engineRunningBlocked = false
+            var lastRaw = ""
 
-        // Best-effort UDS ClearDiagnosticInformation (14 FF FF FF) across CAN modules (ECM/TCM/ABS)
-        if (isCanProtocol) {
-            val udsTargets = listOf("7E0", "7E1", "7B0", "760")
-            for (addr in udsTargets) {
-                transport.sendCommand("ATSH $addr", 900L)
-                val udsResp = transport.sendCommand("14 FF FF FF", 1800L).getOrNull().orEmpty()
-                if (udsResp.uppercase().contains("54")) {
-                    cleared = true
+            fun checkNrc22(raw: String) {
+                val compact = raw.uppercase().replace(Regex("[^0-9A-F]"), "")
+                if (compact.contains("7F0422") || compact.contains("7F1422")) {
+                    engineRunningBlocked = true
                 }
             }
-            transport.sendCommand("ATSH 7DF", 1000L)
-        }
 
-        return if (cleared) {
-            Result.success(Unit)
-        } else {
-            Result.failure(IllegalStateException("ECU refused or did not confirm DTC clear: $body"))
+            fun isPositiveMode04(raw: String): Boolean {
+                val upper = raw.uppercase()
+                if (upper.contains("7F 04") || upper.contains("7F04")) return false
+                return upper.contains("44") || !ObdResponseParser.isErrorOrEmpty(raw)
+            }
+
+            fun isPositiveUdsClear(raw: String): Boolean {
+                val upper = raw.uppercase()
+                if (upper.contains("7F 14") || upper.contains("7F14")) return false
+                return upper.contains("54")
+            }
+
+            // Ensure protocol family is fresh if clear was invoked before a full scan
+            val protoCode = transport.sendCommand("ATDPN", 1000L).getOrNull()?.trim()?.uppercase().orEmpty()
+            val protoName = transport.sendCommand("ATDP", 1000L).getOrNull().orEmpty()
+            if (protoCode.isNotEmpty() || protoName.isNotEmpty()) {
+                busFamily = detectBusFamily(protoCode, protoName)
+            }
+            transport.sendCommand("ATH0", 900L)
+
+            // Stage 1: Standard OBD-II Mode 04 on protocol-appropriate functional address
+            when (busFamily) {
+                ObdBusFamily.CAN_11BIT -> transport.sendCommand("ATSH 7DF", 1000L)
+                ObdBusFamily.CAN_29BIT -> transport.sendCommand("ATSH 18DB33F1", 1000L)
+                else -> Unit
+            }
+
+            val stage1Raw = transport.sendCommand("04", 4500L).getOrElse { return Result.failure(it) }
+            lastRaw = stage1Raw
+            checkNrc22(stage1Raw)
+            if (isPositiveMode04(stage1Raw)) {
+                clearedPaths.add("Mode 04")
+            }
+
+            // Stage 2: Deep protocol-specific clear across physical ECUs & Extended Diagnostic Sessions
+            when (busFamily) {
+                ObdBusFamily.CAN_11BIT -> {
+                    // Direct physical ECM Mode 04
+                    transport.sendCommand("ATSH 7E0", 900L)
+                    val phys04 = transport.sendCommand("04", 3500L).getOrNull().orEmpty()
+                    if (phys04.isNotBlank()) lastRaw = phys04
+                    checkNrc22(phys04)
+                    if (isPositiveMode04(phys04)) {
+                        clearedPaths.add("ECM 7E0 Mode 04")
+                    }
+
+                    // UDS Extended Session (10 03) + ClearDiagnosticInformation (14 FF FF FF) across key modules
+                    val udsModules = listOf("7E0", "7E1", "7E2", "7D1", "7B0", "760", "7C6")
+                    for (addr in udsModules) {
+                        transport.sendCommand("ATSH $addr", 900L)
+                        val sessionResp = transport.sendCommand("10 03", 1200L).getOrNull().orEmpty()
+                        val enteredExt = sessionResp.uppercase().replace(" ", "").contains("5003")
+
+                        val udsClear = transport.sendCommand("14 FF FF FF", 2000L).getOrNull().orEmpty()
+                        checkNrc22(udsClear)
+                        if (isPositiveUdsClear(udsClear)) {
+                            clearedPaths.add("UDS $addr")
+                        } else if (addr == "7E0" && enteredExt) {
+                            // Some ECMs accept Mode 04 inside Extended Session after rejecting default session
+                            val retry04 = transport.sendCommand("04", 2500L).getOrNull().orEmpty()
+                            checkNrc22(retry04)
+                            if (isPositiveMode04(retry04)) {
+                                clearedPaths.add("ECM 7E0 Ext Mode 04")
+                            }
+                        }
+
+                        if (enteredExt) {
+                            transport.sendCommand("10 01", 800L)
+                        }
+                    }
+                    transport.sendCommand("ATSH 7DF", 1000L)
+                }
+
+                ObdBusFamily.CAN_29BIT -> {
+                    transport.sendCommand("ATSH 18DA10F1", 1000L)
+                    val phys04 = transport.sendCommand("04", 3500L).getOrNull().orEmpty()
+                    checkNrc22(phys04)
+                    if (isPositiveMode04(phys04)) {
+                        clearedPaths.add("ECM 29-bit Mode 04")
+                    }
+                    val sess = transport.sendCommand("10 03", 1200L).getOrNull().orEmpty()
+                    val enteredExt = sess.uppercase().replace(" ", "").contains("5003")
+                    val udsClear = transport.sendCommand("14 FF FF FF", 2000L).getOrNull().orEmpty()
+                    checkNrc22(udsClear)
+                    if (isPositiveUdsClear(udsClear)) {
+                        clearedPaths.add("UDS 29-bit ECM")
+                    }
+                    if (enteredExt) {
+                        transport.sendCommand("10 01", 800L)
+                    }
+                    transport.sendCommand("ATSH 18DB33F1", 1000L)
+                }
+
+                ObdBusFamily.KWP_2000 -> {
+                    // KWP2000 ClearDiagnosticInformation (ISO 14230-4: 14 FF 00) + follow-up Mode 04
+                    val kwpClear = transport.sendCommand("14 FF 00", 3000L).getOrNull().orEmpty()
+                    checkNrc22(kwpClear)
+                    if (isPositiveUdsClear(kwpClear)) {
+                        clearedPaths.add("KWP2000 14 FF 00")
+                    }
+                    if (clearedPaths.isEmpty()) {
+                        delay(250)
+                        val retry04 = transport.sendCommand("04", 3500L).getOrNull().orEmpty()
+                        checkNrc22(retry04)
+                        if (isPositiveMode04(retry04)) {
+                            clearedPaths.add("KWP2000 Mode 04")
+                        }
+                    }
+                }
+
+                ObdBusFamily.LEGACY_OTHER -> {
+                    if (clearedPaths.isEmpty()) {
+                        delay(300)
+                        val retry04 = transport.sendCommand("04", 3500L).getOrNull().orEmpty()
+                        checkNrc22(retry04)
+                        if (isPositiveMode04(retry04)) {
+                            clearedPaths.add("Legacy Mode 04")
+                        }
+                    }
+                }
+            }
+
+            // Stage 3: Verify actual MIL lamp bit via live Mode 01 PID 01
+            delay(400)
+            val readinessRaw = transport.sendCommand("0101", 2500L).getOrNull()
+            val readinessAfter = readinessRaw?.let { ObdResponseParser.parseReadiness(it) }
+            val milNowOff = readinessAfter?.let { !it.milOn }
+
+            Result.success(
+                MilResetResult(
+                    clearedConfirmed = clearedPaths.isNotEmpty(),
+                    milIsNowOff = milNowOff,
+                    engineRunningBlocked = engineRunningBlocked,
+                    clearedPaths = clearedPaths.toList(),
+                    rawDetail = lastRaw
+                )
+            )
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
@@ -320,10 +474,12 @@ class ObdCommandEngine(
         queryMode("07", 0x47, DtcStatus.PENDING)
         queryMode("0A", 0x4A, DtcStatus.PERMANENT)
 
-        // Safe UDS ReadDTC probe (19 02 AF) on common CAN physical modules if CAN is active
-        if (isCanProtocol) {
+        // Safe UDS ReadDTC probe (19 02 AF) on common 11-bit CAN physical modules
+        if (busFamily == ObdBusFamily.CAN_11BIT) {
             val udsTargets = listOf(
                 "7E1" to "7E9", // TCM
+                "7E2" to "7EA", // Hybrid / Aux Powertrain
+                "7D1" to "7D9", // ABS / ESC (Asian/Korean)
                 "7B0" to "7B8", // ABS / VSC (Toyota/Asian)
                 "760" to "768"  // ABS / ESC (Ford/GM/Mazda)
             )
@@ -436,19 +592,26 @@ class ObdCommandEngine(
         return list
     }
 
-    private fun detectIsCan(protoCode: String, protoName: String): Boolean {
+    private fun detectBusFamily(protoCode: String, protoName: String): ObdBusFamily {
         val cleanCode = protoCode.removePrefix("A")
-        if (cleanCode in listOf("6", "7", "8", "9", "A", "B", "C")) return true
-        return protoName.contains("CAN", ignoreCase = true) || protoName.contains("15765", ignoreCase = true)
+        val upperName = protoName.uppercase()
+        return when {
+            cleanCode in listOf("7", "9", "C") || upperName.contains("29/") -> ObdBusFamily.CAN_29BIT
+            cleanCode in listOf("6", "8", "A", "B") || upperName.contains("CAN") || upperName.contains("15765") -> ObdBusFamily.CAN_11BIT
+            cleanCode in listOf("4", "5") || upperName.contains("14230") || upperName.contains("KWP") -> ObdBusFamily.KWP_2000
+            else -> ObdBusFamily.LEGACY_OTHER
+        }
     }
 
     private fun mapEcuAddress(addr: String): DetectedEcu = when (addr.uppercase()) {
         "7E8" -> DetectedEcu("7E8", "Engine Control Module (ECM)", "كمبيوتر المحرك (ECM)", "OBD-II CAN")
-        "7EA" -> DetectedEcu("7EA", "Transmission Control Module (TCM)", "كمبيوتر ناقل الحركة / القير (TCM)", "OBD-II CAN")
+        "7EA" -> DetectedEcu("7EA", "Transmission / Secondary ECU", "كمبيوتر ناقل الحركة / وحدة مساعدة", "OBD-II CAN")
         "7E9" -> DetectedEcu("7E9", "Transmission / Hybrid ECU", "وحدة القير أو النظام الهجين", "UDS / CAN")
         "7EB" -> DetectedEcu("7EB", "Hybrid / Battery Management ECU", "وحدة البطارية / الهجين", "OBD-II CAN")
+        "7D9", "7D1" -> DetectedEcu(addr, "ABS / Stability Control (ABS/ESC)", "وحدة مانع الانغلاق والثبات (ABS/ESC)", "UDS CAN")
         "7B8", "7B0" -> DetectedEcu(addr, "ABS / Stability Control (ABS/VSC)", "وحدة مانع الانغلاق والثبات (ABS)", "UDS CAN")
         "768", "760" -> DetectedEcu(addr, "ABS / Brake Control Module", "وحدة الفرامل ABS", "UDS CAN")
+        "7C6", "7CE" -> DetectedEcu(addr, "Instrument Cluster (CLU)", "وحدة لوحة العدادات", "UDS CAN")
         else -> DetectedEcu(addr, "Control Module ($addr)", "وحدة تحكم ($addr)", "CAN ECU")
     }
 }

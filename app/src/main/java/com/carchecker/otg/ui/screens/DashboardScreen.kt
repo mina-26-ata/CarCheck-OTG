@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -590,7 +591,7 @@ fun DashboardScreen(
                     ) {
                         Button(
                             onClick = onRunFullScan,
-                            enabled = !state.scanProgress.isScanning,
+                            enabled = !state.scanProgress.isScanning && !state.isResettingMil,
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -610,7 +611,7 @@ fun DashboardScreen(
                         }
                         OutlinedButton(
                             onClick = { showClearMilDialog = true },
-                            enabled = !state.scanProgress.isScanning,
+                            enabled = !state.scanProgress.isScanning && !state.isResettingMil,
                             border = BorderStroke(
                                 1.dp,
                                 if (report?.readiness?.milOn == true || report?.dtcs?.isNotEmpty() == true) {
@@ -631,9 +632,22 @@ fun DashboardScreen(
                                 .fillMaxWidth()
                                 .heightIn(min = 46.dp)
                         ) {
-                            Icon(Icons.Rounded.DeleteSweep, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(strings.clearDtcsBtn, fontWeight = FontWeight.Bold)
+                            if (state.isResettingMil) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = CockpitColors.CriticalRed
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = if (isAr) "جاري إطفاء لمبة المحرك..." else "Resetting Check Engine...",
+                                    fontWeight = FontWeight.Bold
+                                )
+                            } else {
+                                Icon(Icons.Rounded.DeleteSweep, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(strings.clearDtcsBtn, fontWeight = FontWeight.Bold)
+                            }
                         }
                         OutlinedButton(
                             onClick = onDisconnect,

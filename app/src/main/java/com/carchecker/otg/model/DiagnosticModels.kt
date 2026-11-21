@@ -247,6 +247,14 @@ data class ScanProgress(
     val stepLabelAr: String = ""
 )
 
+data class MilResetResult(
+    val clearedConfirmed: Boolean,
+    val milIsNowOff: Boolean?,
+    val engineRunningBlocked: Boolean,
+    val clearedPaths: List<String> = emptyList(),
+    val rawDetail: String = ""
+)
+
 data class AppSettings(
     val language: AppLanguage = AppLanguage.AR,
     val unit: MeasurementUnit = MeasurementUnit.METRIC,

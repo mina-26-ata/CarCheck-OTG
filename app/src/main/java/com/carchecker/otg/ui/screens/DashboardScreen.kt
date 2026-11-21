@@ -1,7 +1,14 @@
 package com.carchecker.otg.ui.screens
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -15,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
@@ -25,6 +33,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Error
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Radar
@@ -54,6 +63,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -108,6 +118,7 @@ fun DashboardScreen(
     onDisconnect: () -> Unit,
     onStartSimulation: () -> Unit,
     onRunFullScan: () -> Unit,
+    onToggleLiveStreaming: () -> Unit,
     onClearDtcs: () -> Unit,
     onSelectZone: (CarSubsystemZone?) -> Unit,
     onLoadHistoryReport: (FullScanReport) -> Unit,
@@ -197,6 +208,16 @@ fun DashboardScreen(
         // 1. HUD Cockpit Panel: Triple Circular Gauges + Live Telemetry & Status Strip
         item {
             CockpitCard(borderColor = CockpitColors.HudGlowBorder) {
+                if (isConnected) {
+                    LiveCockpitStatusBar(
+                        isStreaming = state.isLiveStreaming,
+                        isBusy = state.scanProgress.isScanning || state.isResettingMil,
+                        isAr = isAr,
+                        onToggle = onToggleLiveStreaming
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+
                 TripleTelemetryGauges(
                     sensors = activeSensors,
                     batteryVoltage = report?.vehicleInfo?.batteryVoltage,
@@ -897,6 +918,93 @@ private fun telemetryRatingColor(level: TelemetryRatingLevel): Color = when (lev
     TelemetryRatingLevel.FAIR -> CockpitColors.WarningAmber
     TelemetryRatingLevel.POOR -> CockpitColors.CriticalRed
     TelemetryRatingLevel.IDLE -> CockpitColors.TextSecondary
+}
+
+@Composable
+private fun LiveCockpitStatusBar(
+    isStreaming: Boolean,
+    isBusy: Boolean,
+    isAr: Boolean,
+    onToggle: () -> Unit
+) {
+    val pulseTransition = rememberInfiniteTransition(label = "live_dot_pulse")
+    val pulseAlpha by pulseTransition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 650),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "live_dot_alpha"
+    )
+
+    val statusColor = when {
+        isBusy -> CockpitColors.AccentCyan
+        isStreaming -> CockpitColors.HealthyGreen
+        else -> CockpitColors.WarningAmber
+    }
+    val statusText = when {
+        isBusy -> if (isAr) "جاري الفحص..." else "Scanning..."
+        isStreaming -> if (isAr) "بث مباشر للمؤشرات" else "LIVE GAUGES"
+        else -> if (isAr) "البث المباشر متوقف" else "Live Paused"
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(statusColor.copy(alpha = if (isStreaming && !isBusy) pulseAlpha else 1f))
+            )
+            Text(
+                text = statusText,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Bold,
+                color = statusColor,
+                maxLines = 1
+            )
+        }
+
+        Surface(
+            onClick = { if (!isBusy) onToggle() },
+            enabled = !isBusy,
+            color = statusColor.copy(alpha = 0.14f),
+            shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(0.9.dp, statusColor.copy(alpha = 0.55f))
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    imageVector = if (isStreaming) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    contentDescription = null,
+                    tint = statusColor,
+                    modifier = Modifier.size(14.dp)
+                )
+                Text(
+                    text = if (isStreaming) {
+                        if (isAr) "إيقاف مؤقت" else "Pause"
+                    } else {
+                        if (isAr) "تشغيل البث" else "Go Live"
+                    },
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = CockpitColors.TextPrimary,
+                    maxLines = 1
+                )
+            }
+        }
+    }
 }
 
 @Composable

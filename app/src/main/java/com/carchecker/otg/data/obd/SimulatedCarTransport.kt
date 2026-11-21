@@ -81,7 +81,15 @@ class SimulatedCarTransport(
                 cmd == "0131" -> if (dtcsCleared) "41 31 00 08" else if (profile == DemoProfile.HEALTHY) "41 31 00 22" else "41 31 12 A0"
                 cmd == "014D" -> if (!dtcsCleared && profile != DemoProfile.HEALTHY) "41 4D 00 B4" else "41 4D 00 00"
                 cmd == "014E" -> if (dtcsCleared) "41 4E 00 05" else "41 4E 0A F0"
-                cmd.startsWith("01") -> handleLiveSensor(cmd.removePrefix("01"))
+                cmd.startsWith("01") -> {
+                    val rawPid = cmd.removePrefix("01")
+                    val normalizedPid = if (rawPid.length == 3 && rawPid.last() in '1'..'9') {
+                        rawPid.take(2)
+                    } else {
+                        rawPid
+                    }
+                    handleLiveSensor(normalizedPid)
+                }
                 cmd == "03" -> handleMode03()
                 cmd == "07" -> handleMode07()
                 cmd == "0A" -> handleMode0A()

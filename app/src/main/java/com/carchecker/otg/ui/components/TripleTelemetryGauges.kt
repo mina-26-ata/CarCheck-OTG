@@ -1,5 +1,6 @@
 package com.carchecker.otg.ui.components
 
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -165,7 +166,7 @@ fun CircularHudGauge(
     val clamped = ((value - minValue) / (maxValue - minValue).coerceAtLeast(1f)).coerceIn(0f, 1f)
     val animatedFraction by animateFloatAsState(
         targetValue = clamped,
-        animationSpec = tween(durationMillis = 500),
+        animationSpec = tween(durationMillis = 120, easing = LinearOutSlowInEasing),
         label = "hud_gauge_anim"
     )
     val activeAccent = alertTint ?: primaryTint

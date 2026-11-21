@@ -104,6 +104,10 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
     var showHelpDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
+    LaunchedEffect(selectedTab) {
+        viewModel.setActiveTab(selectedTab)
+    }
+
     LaunchedEffect(state.toastMessage) {
         val msg = state.toastMessage
         if (!msg.isNullOrBlank()) {
@@ -299,6 +303,7 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
                         onDisconnect = viewModel::disconnect,
                         onStartSimulation = { viewModel.startSimulation() },
                         onRunFullScan = viewModel::runFullScan,
+                        onToggleLiveStreaming = viewModel::toggleLiveStreaming,
                         onClearDtcs = viewModel::clearDtcs,
                         onSelectZone = viewModel::selectCarZone,
                         onLoadHistoryReport = viewModel::selectHistoryReport,

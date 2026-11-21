@@ -32,8 +32,10 @@ class ObdCommandEngine(
     private val isCanProtocol: Boolean
         get() = busFamily == ObdBusFamily.CAN_11BIT || busFamily == ObdBusFamily.CAN_29BIT
     private var supportedPidsCache: Set<String> = emptySet()
+    private var fastSingleResponseSupported: Boolean? = null
 
     suspend fun initializeAdapter(transport: ObdTransport): Result<String> {
+        fastSingleResponseSupported = null
         val atz = transport.sendCommand("ATZ", 2500L)
         if (atz.isFailure) return atz
         delay(250)
@@ -169,31 +171,162 @@ class ObdCommandEngine(
         }
         val results = mutableListOf<LiveSensorReading>()
         for (def in defs) {
-            val raw = transport.sendCommand("01${def.pidHex}", 1500L).getOrNull() ?: continue
-            val dataBytes = ObdResponseParser.parseMode01SensorBytes(raw, def.pidHex) ?: continue
-            val metricValue = def.decodeMetric(dataBytes) ?: continue
-            val displayValue = def.valueFor(metricValue, unit)
-            val prev = existing[def.pidHex]
-            val newHistory = ((prev?.history ?: emptyList()) + displayValue).takeLast(30)
-            results.add(
-                LiveSensorReading(
-                    pidHex = def.pidHex,
-                    nameEn = def.nameEn,
-                    nameAr = def.nameAr,
-                    value = displayValue,
-                    unit = def.unitFor(unit),
-                    category = def.category,
-                    normalMin = def.minFor(unit),
-                    normalMax = def.maxFor(unit),
-                    minRecorded = minOf(prev?.minRecorded ?: displayValue, displayValue),
-                    maxRecorded = maxOf(prev?.maxRecorded ?: displayValue, displayValue),
-                    history = newHistory,
-                    decimals = def.decimals,
-                    timestampMs = System.currentTimeMillis()
-                )
-            )
+            readSingleSensor(
+                transport = transport,
+                def = def,
+                unit = unit,
+                existing = existing,
+                timeoutMs = 1500L,
+                allowFastSingleResponse = false
+            )?.let { results.add(it) }
         }
         return results
+    }
+
+    /**
+     * High-frequency cockpit telemetry poller dedicated to the top 3 HUD gauges.
+     * Always polls fast-changing throttle/motion PIDs (010C RPM, 010D Speed) with automatic
+     * ELM327 single-response optimization (010C1 on CAN -> skips ~200ms multi-ECU wait, with
+     * automatic fallback to standard 010C on adapters that do not support the response-count suffix).
+     * Slow-changing gauges (0105 Coolant, 0142 Voltage / ATRV) are refreshed periodically.
+     */
+    suspend fun pollCockpitGaugesOnce(
+        transport: ObdTransport,
+        unit: MeasurementUnit,
+        existing: Map<String, LiveSensorReading> = emptyMap(),
+        includeSlowPids: Boolean = false
+    ): List<LiveSensorReading> {
+        val results = mutableListOf<LiveSensorReading>()
+
+        // Fast PIDs: Engine RPM (0C) always, Vehicle Speed (0D) whenever supported
+        ObdPidRegistry.byPidHex["0C"]?.let { def ->
+            readSingleSensor(
+                transport = transport,
+                def = def,
+                unit = unit,
+                existing = existing,
+                timeoutMs = 700L,
+                allowFastSingleResponse = true
+            )?.let { results.add(it) }
+        }
+
+        if (supportedPidsCache.isEmpty() || "0D" in supportedPidsCache) {
+            ObdPidRegistry.byPidHex["0D"]?.let { def ->
+                readSingleSensor(
+                    transport = transport,
+                    def = def,
+                    unit = unit,
+                    existing = existing,
+                    timeoutMs = 700L,
+                    allowFastSingleResponse = true
+                )?.let { results.add(it) }
+            }
+        }
+
+        if (includeSlowPids) {
+            // Coolant Temperature (05)
+            if (supportedPidsCache.isEmpty() || "05" in supportedPidsCache) {
+                ObdPidRegistry.byPidHex["05"]?.let { def ->
+                    readSingleSensor(
+                        transport = transport,
+                        def = def,
+                        unit = unit,
+                        existing = existing,
+                        timeoutMs = 900L,
+                        allowFastSingleResponse = true
+                    )?.let { results.add(it) }
+                }
+            }
+
+            // Battery / Control Module Voltage (0142 with ATRV fallback for ECUs lacking PID 42)
+            val voltDef = ObdPidRegistry.byPidHex["42"]
+            if (voltDef != null) {
+                val pid42Reading = if (supportedPidsCache.isEmpty() || "42" in supportedPidsCache) {
+                    readSingleSensor(
+                        transport = transport,
+                        def = voltDef,
+                        unit = unit,
+                        existing = existing,
+                        timeoutMs = 900L,
+                        allowFastSingleResponse = true
+                    )
+                } else {
+                    null
+                }
+                if (pid42Reading != null) {
+                    results.add(pid42Reading)
+                } else {
+                    val atrvRaw = transport.sendCommand("ATRV", 900L).getOrNull()
+                    val parsedVolt = atrvRaw?.let { ObdResponseParser.parseVoltage(it) }
+                    if (parsedVolt != null) {
+                        results.add(buildSensorReading(voltDef, parsedVolt, unit, existing["42"]))
+                    }
+                }
+            }
+        }
+
+        return results
+    }
+
+    private suspend fun readSingleSensor(
+        transport: ObdTransport,
+        def: SensorPidDefinition,
+        unit: MeasurementUnit,
+        existing: Map<String, LiveSensorReading>,
+        timeoutMs: Long,
+        allowFastSingleResponse: Boolean
+    ): LiveSensorReading? {
+        var dataBytes: IntArray? = null
+        var triedFastSuffix = false
+
+        if (allowFastSingleResponse && isCanProtocol && fastSingleResponseSupported != false) {
+            triedFastSuffix = true
+            val fastRaw = transport.sendCommand("01${def.pidHex}1", timeoutMs).getOrNull()
+            val fastParsed = fastRaw?.let { ObdResponseParser.parseMode01SensorBytes(it, def.pidHex) }
+            if (fastParsed != null) {
+                fastSingleResponseSupported = true
+                dataBytes = fastParsed
+            } else if (fastRaw != null && (fastRaw.trim() == "?" || fastRaw.uppercase().contains("ERROR"))) {
+                fastSingleResponseSupported = false
+            }
+        }
+
+        if (dataBytes == null) {
+            val raw = transport.sendCommand("01${def.pidHex}", timeoutMs).getOrNull() ?: return null
+            val parsed = ObdResponseParser.parseMode01SensorBytes(raw, def.pidHex) ?: return null
+            if (triedFastSuffix) {
+                fastSingleResponseSupported = false
+            }
+            dataBytes = parsed
+        }
+
+        val metricValue = def.decodeMetric(dataBytes) ?: return null
+        val displayValue = def.valueFor(metricValue, unit)
+        return buildSensorReading(def, displayValue, unit, existing[def.pidHex])
+    }
+
+    private fun buildSensorReading(
+        def: SensorPidDefinition,
+        displayValue: Double,
+        unit: MeasurementUnit,
+        prev: LiveSensorReading?
+    ): LiveSensorReading {
+        val newHistory = ((prev?.history ?: emptyList()) + displayValue).takeLast(30)
+        return LiveSensorReading(
+            pidHex = def.pidHex,
+            nameEn = def.nameEn,
+            nameAr = def.nameAr,
+            value = displayValue,
+            unit = def.unitFor(unit),
+            category = def.category,
+            normalMin = def.minFor(unit),
+            normalMax = def.maxFor(unit),
+            minRecorded = minOf(prev?.minRecorded ?: displayValue, displayValue),
+            maxRecorded = maxOf(prev?.maxRecorded ?: displayValue, displayValue),
+            history = newHistory,
+            decimals = def.decimals,
+            timestampMs = System.currentTimeMillis()
+        )
     }
 
     suspend fun clearDtcs(transport: ObdTransport): Result<Unit> {

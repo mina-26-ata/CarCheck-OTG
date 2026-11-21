@@ -87,6 +87,9 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
     private var pendingUsbDeviceId: Int? = null
     private var liveJob: Job? = null
     private val liveSensorCache = linkedMapOf<String, LiveSensorReading>()
+    @Volatile
+    private var cockpitFastStreamMode: Boolean = true
+    private var userPausedLiveStream: Boolean = false
 
     init {
         val loadedSettings = settingsStore.load()
@@ -211,6 +214,7 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
 
     private suspend fun connectUsbInternal(deviceId: Int) {
         stopLiveStreaming()
+        userPausedLiveStream = false
         activeTransport?.disconnect()
 
         val driver = otgManager.findDriverByDeviceId(deviceId) ?: return
@@ -269,6 +273,7 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
     fun connectBluetooth(deviceInfo: BluetoothAdapterInfo) {
         viewModelScope.launch {
             stopLiveStreaming()
+            userPausedLiveStream = false
             btManager.stopScan()
             activeTransport?.disconnect()
 
@@ -329,6 +334,7 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
     fun startSimulation(profile: DemoProfile = _uiState.value.settings.demoProfile) {
         viewModelScope.launch {
             stopLiveStreaming()
+            userPausedLiveStream = false
             activeTransport?.disconnect()
 
             if (profile != _uiState.value.settings.demoProfile) {
@@ -359,6 +365,7 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
     fun disconnect() {
         viewModelScope.launch {
             stopLiveStreaming()
+            userPausedLiveStream = false
             activeTransport?.disconnect()
             activeTransport = null
             liveSensorCache.clear()
@@ -377,7 +384,6 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
     fun runFullScan() {
         val transport = activeTransport ?: return
         viewModelScope.launch {
-            val wasStreaming = _uiState.value.isLiveStreaming
             stopLiveStreaming()
 
             val isSim = _uiState.value.connectionMode == ConnectionMode.SIMULATION
@@ -408,7 +414,9 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
                         autoPickZone = true
                     )
                 }
-                if (wasStreaming) startLiveStreaming()
+                if (!userPausedLiveStream && transport.isConnected) {
+                    startLiveStreaming()
+                }
             }.onFailure { err ->
                 _uiState.update {
                     it.copy(
@@ -512,40 +520,77 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun setActiveTab(tabIndex: Int) {
+        cockpitFastStreamMode = (tabIndex != 3)
+    }
+
     fun toggleLiveStreaming() {
         if (_uiState.value.isLiveStreaming) {
+            userPausedLiveStream = true
             stopLiveStreaming()
         } else {
+            userPausedLiveStream = false
             startLiveStreaming()
         }
     }
 
     fun startLiveStreaming() {
         val transport = activeTransport ?: return
+        if (!transport.isConnected) return
         if (liveJob?.isActive == true) return
 
+        userPausedLiveStream = false
         _uiState.update { it.copy(isLiveStreaming = true) }
         liveJob = viewModelScope.launch {
+            var tick = 0
+            var consecutiveEmpty = 0
             while (isActive && transport.isConnected) {
                 val unit = _uiState.value.settings.unit
-                val readings = engine.pollSensorsOnce(
-                    transport = transport,
-                    unit = unit,
-                    existing = liveSensorCache,
-                    priorityPidsOnly = false
-                )
-                for (r in readings) {
-                    liveSensorCache[r.pidHex] = r
+                val fastMode = cockpitFastStreamMode
+                val readings = if (fastMode) {
+                    engine.pollCockpitGaugesOnce(
+                        transport = transport,
+                        unit = unit,
+                        existing = liveSensorCache,
+                        includeSlowPids = (tick % 10 == 0)
+                    )
+                } else {
+                    engine.pollSensorsOnce(
+                        transport = transport,
+                        unit = unit,
+                        existing = liveSensorCache,
+                        priorityPidsOnly = false
+                    )
                 }
+
                 if (readings.isNotEmpty()) {
-                    _uiState.update { state ->
-                        applyReportDerivedState(
-                            state = state.copy(liveSensors = liveSensorCache.values.toList()),
-                            autoPickZone = false
-                        )
+                    consecutiveEmpty = 0
+                    for (r in readings) {
+                        liveSensorCache[r.pidHex] = r
                     }
+                    val snapshot = liveSensorCache.values.toList()
+                    if (fastMode) {
+                        // Fast lightweight update so the 3 top HUD needles react smoothly to throttle input
+                        _uiState.update { it.copy(liveSensors = snapshot) }
+                    } else {
+                        _uiState.update { state ->
+                            applyReportDerivedState(
+                                state = state.copy(liveSensors = snapshot),
+                                autoPickZone = false
+                            )
+                        }
+                    }
+                } else {
+                    consecutiveEmpty++
                 }
-                delay(450)
+
+                tick++
+                val loopDelayMs = when {
+                    consecutiveEmpty >= 3 -> 400L
+                    fastMode -> 40L
+                    else -> 280L
+                }
+                delay(loopDelayMs)
             }
             _uiState.update { it.copy(isLiveStreaming = false) }
         }
@@ -728,6 +773,9 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun setUnit(unit: MeasurementUnit) {
+        if (unit != _uiState.value.settings.unit) {
+            liveSensorCache.clear()
+        }
         updateSettings(_uiState.value.settings.copy(unit = unit))
     }
 

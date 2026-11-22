@@ -53,4 +53,20 @@ class AppUpdateCheckerTest {
         val upToDate = checker.parseLatestReleaseJson(json, "1.2.0")
         assertTrue(upToDate is AppUpdateState.UpToDate)
     }
+
+    @Test
+    fun parseRedirectReleaseLocation_handlesRateLimitFallbackCleanly() {
+        val location = "https://github.com/mina-26-ata/CarCheck-OTG/releases/tag/v1.4.0"
+        val avail = checker.parseRedirectReleaseLocation(location, "1.3.0")
+        assertTrue(avail is AppUpdateState.UpdateAvailable)
+        val update = avail as AppUpdateState.UpdateAvailable
+        assertEquals("1.4.0", update.latestVersion)
+        assertEquals(
+            "https://github.com/mina-26-ata/CarCheck-OTG/releases/download/v1.4.0/CarCheck-OTG-v1.4.0.apk",
+            update.downloadUrl
+        )
+
+        val same = checker.parseRedirectReleaseLocation(location, "1.4.0")
+        assertTrue(same is AppUpdateState.UpToDate)
+    }
 }

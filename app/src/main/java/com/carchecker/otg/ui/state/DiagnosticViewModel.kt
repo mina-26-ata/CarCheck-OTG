@@ -64,6 +64,7 @@ data class DiagnosticUiState(
     val isAiAnalyzing: Boolean = false,
     val aiError: String? = null,
     val updateState: AppUpdateState = AppUpdateState.Idle,
+    val showUpdateDialog: Boolean = false,
     val toastMessage: String? = null
 )
 
@@ -90,6 +91,8 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
     @Volatile
     private var cockpitFastStreamMode: Boolean = true
     private var userPausedLiveStream: Boolean = false
+    private var lastAutoUpdateCheckMs: Long = 0L
+    private var dismissedUpdateVersion: String? = null
 
     init {
         val loadedSettings = settingsStore.load()
@@ -174,6 +177,9 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
                 )
             }
         }
+
+        // Automatically check for new app releases silently on startup
+        checkForUpdatesAutoIfNeeded()
     }
 
     fun refreshUsbDevices() {
@@ -487,36 +493,79 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun checkForUpdates() {
+    fun checkForUpdatesAutoIfNeeded() {
+        val now = System.currentTimeMillis()
+        val alreadyCheckedRecently = (now - lastAutoUpdateCheckMs) < 30L * 60L * 1000L
+        if (alreadyCheckedRecently && _uiState.value.updateState !is AppUpdateState.Idle) return
+        checkForUpdates(silent = true)
+    }
+
+    fun checkForUpdates(silent: Boolean = false) {
         viewModelScope.launch {
             if (_uiState.value.updateState is AppUpdateState.Checking) return@launch
-            _uiState.update { it.copy(updateState = AppUpdateState.Checking) }
+            lastAutoUpdateCheckMs = System.currentTimeMillis()
+
+            if (!silent) {
+                dismissedUpdateVersion = null
+                _uiState.update { it.copy(updateState = AppUpdateState.Checking) }
+            }
+
             val result = updateChecker.checkForUpdates(BuildConfig.VERSION_NAME)
             _uiState.update { state ->
                 val isAr = state.settings.language == AppLanguage.AR
-                val toast = when (result) {
-                    is AppUpdateState.UpToDate -> if (isAr) {
-                        "التطبيق محدّث بالفعل (v${result.currentVersion})"
-                    } else {
-                        "You are running the latest version (v${result.currentVersion})"
+
+                if (silent) {
+                    when (result) {
+                        is AppUpdateState.UpdateAvailable -> state.copy(
+                            updateState = result,
+                            showUpdateDialog = (dismissedUpdateVersion != result.latestVersion)
+                        )
+                        is AppUpdateState.UpToDate -> state.copy(
+                            updateState = result,
+                            showUpdateDialog = false
+                        )
+                        else -> state // Stay completely quiet when offline or transient error during auto-check
                     }
-                    is AppUpdateState.UpdateAvailable -> if (isAr) {
-                        "يتوفر إصدار جديد: v${result.latestVersion}"
-                    } else {
-                        "New version available: v${result.latestVersion}"
+                } else {
+                    val toast = when (result) {
+                        is AppUpdateState.UpToDate -> if (isAr) {
+                            "التطبيق محدّث بالفعل (v${result.currentVersion})"
+                        } else {
+                            "You are running the latest version (v${result.currentVersion})"
+                        }
+                        is AppUpdateState.UpdateAvailable -> if (isAr) {
+                            "يتوفر إصدار جديد: v${result.latestVersion}"
+                        } else {
+                            "New version available: v${result.latestVersion}"
+                        }
+                        is AppUpdateState.Error -> if (isAr) {
+                            "تعذر التحقق من التحديثات: ${result.message}"
+                        } else {
+                            "Update check failed: ${result.message}"
+                        }
+                        else -> null
                     }
-                    is AppUpdateState.Error -> if (isAr) {
-                        "تعذر التحقق من التحديثات: ${result.message}"
-                    } else {
-                        "Update check failed: ${result.message}"
-                    }
-                    else -> null
+                    state.copy(
+                        updateState = result,
+                        showUpdateDialog = result is AppUpdateState.UpdateAvailable,
+                        toastMessage = toast
+                    )
                 }
-                state.copy(
-                    updateState = result,
-                    toastMessage = toast
-                )
             }
+        }
+    }
+
+    fun dismissUpdateDialog() {
+        val latest = (_uiState.value.updateState as? AppUpdateState.UpdateAvailable)?.latestVersion
+        if (latest != null) {
+            dismissedUpdateVersion = latest
+        }
+        _uiState.update { it.copy(showUpdateDialog = false) }
+    }
+
+    fun openUpdateDialog() {
+        if (_uiState.value.updateState is AppUpdateState.UpdateAvailable) {
+            _uiState.update { it.copy(showUpdateDialog = true) }
         }
     }
 

@@ -1,33 +1,43 @@
 package com.carchecker.otg
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.DirectionsCar
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -38,6 +48,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -55,12 +66,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.carchecker.otg.data.update.AppUpdateState
 import com.carchecker.otg.model.AppLanguage
 import com.carchecker.otg.model.ConnectionMode
 import com.carchecker.otg.model.ObservationSeverity
@@ -88,6 +101,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        viewModel.checkForUpdatesAutoIfNeeded()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         viewModel.refreshUsbDevices()
@@ -97,12 +115,15 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
+    val context = LocalContext.current
     val state by viewModel.uiState.collectAsState()
+    val isAr = state.settings.language == AppLanguage.AR
     val strings = AppStrings.of(state.settings.language)
-    val layoutDir = if (state.settings.language == AppLanguage.AR) LayoutDirection.Rtl else LayoutDirection.Ltr
+    val layoutDir = if (isAr) LayoutDirection.Rtl else LayoutDirection.Ltr
     var selectedTab by remember { mutableIntStateOf(0) }
     var showHelpDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val availableUpdate = state.updateState as? AppUpdateState.UpdateAvailable
 
     LaunchedEffect(selectedTab) {
         viewModel.setActiveTab(selectedTab)
@@ -136,7 +157,8 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
                 dismissButton = {
                     TextButton(
                         onClick = {
-                            viewModel.checkForUpdates()
+                            showHelpDialog = false
+                            viewModel.checkForUpdates(silent = false)
                         }
                     ) {
                         Text(strings.checkUpdatesBtn, color = CockpitColors.HealthyGreen, fontWeight = FontWeight.Bold)
@@ -144,7 +166,82 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
                 },
                 confirmButton = {
                     TextButton(onClick = { showHelpDialog = false }) {
-                        Text(if (state.settings.language == AppLanguage.AR) "حسناً" else "Got it", fontWeight = FontWeight.Bold)
+                        Text(if (isAr) "حسناً" else "Got it", fontWeight = FontWeight.Bold)
+                    }
+                }
+            )
+        }
+
+        if (state.showUpdateDialog && availableUpdate != null) {
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissUpdateDialog() },
+                containerColor = CockpitColors.Surface,
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.SystemUpdate,
+                            contentDescription = null,
+                            tint = CockpitColors.HealthyGreen
+                        )
+                        Text(
+                            text = strings.updateAvailableLabel,
+                            color = CockpitColors.HealthyGreen,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text = if (isAr) {
+                                "تم اكتشاف إصدار أحدث من التطبيق تلقائياً.\nالإصدار الحالي: v${availableUpdate.currentVersion}  •  الإصدار الجديد: v${availableUpdate.latestVersion}"
+                            } else {
+                                "A newer version of CarCheck OTG is ready.\nCurrent: v${availableUpdate.currentVersion}  •  New: v${availableUpdate.latestVersion}"
+                            },
+                            color = CockpitColors.TextPrimary,
+                            fontSize = 13.5.sp
+                        )
+                        if (availableUpdate.releaseNotes.isNotBlank()) {
+                            Surface(
+                                color = CockpitColors.BackgroundDeep,
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, CockpitColors.SurfaceBorder),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = availableUpdate.releaseNotes.take(420),
+                                    color = CockpitColors.TextSecondary,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(10.dp)
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.dismissUpdateDialog()
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(availableUpdate.downloadUrl)))
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = CockpitColors.HealthyGreen,
+                            contentColor = CockpitColors.BackgroundDeep
+                        )
+                    ) {
+                        Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.downloadUpdateBtn, fontWeight = FontWeight.ExtraBold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.dismissUpdateDialog() }) {
+                        Text(if (isAr) "لاحقاً" else "Later", color = CockpitColors.TextSecondary)
                     }
                 }
             )
@@ -208,6 +305,54 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
                         )
                     )
                     HorizontalDivider(color = CockpitColors.HudGlowBorder.copy(alpha = 0.45f))
+                    if (availableUpdate != null) {
+                        Surface(
+                            color = CockpitColors.HealthyGreen.copy(alpha = 0.16f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { viewModel.openUpdateDialog() }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.SystemUpdate,
+                                        contentDescription = null,
+                                        tint = CockpitColors.HealthyGreen,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = if (isAr) {
+                                            "يتوفر تحديث جديد (v${availableUpdate.latestVersion}) — اضغط للتنزيل"
+                                        } else {
+                                            "Update v${availableUpdate.latestVersion} available — Tap to download"
+                                        },
+                                        color = CockpitColors.HealthyGreen,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Rounded.Download,
+                                    contentDescription = null,
+                                    tint = CockpitColors.HealthyGreen,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                        HorizontalDivider(color = CockpitColors.HealthyGreen.copy(alpha = 0.4f))
+                    }
                 }
             },
             bottomBar = {
@@ -267,7 +412,17 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
                         NavigationBarItem(
                             selected = selectedTab == 4,
                             onClick = { selectedTab = 4 },
-                            icon = { Icon(Icons.Rounded.DirectionsCar, contentDescription = null) },
+                            icon = {
+                                BadgedBox(
+                                    badge = {
+                                        if (availableUpdate != null) {
+                                            Badge(containerColor = CockpitColors.HealthyGreen)
+                                        }
+                                    }
+                                ) {
+                                    Icon(Icons.Rounded.DirectionsCar, contentDescription = null)
+                                }
+                            },
                             label = { Text(strings.navVehicle, maxLines = 1) },
                             colors = navItemColors()
                         )
@@ -338,7 +493,7 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
                         onSetBaudRate = viewModel::setPreferredBaudRate,
                         onSetDemoProfile = viewModel::setDemoProfile,
                         onSaveGeminiConfig = viewModel::saveGeminiConfig,
-                        onCheckForUpdates = viewModel::checkForUpdates,
+                        onCheckForUpdates = { viewModel.checkForUpdates(silent = false) },
                         onLoadHistoryReport = {
                             viewModel.selectHistoryReport(it)
                             selectedTab = 0

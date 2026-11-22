@@ -39,6 +39,7 @@ class AppUpdateChecker {
         const val GITHUB_OWNER = "mina-26-ata"
         const val GITHUB_REPO = "CarCheck-OTG"
         const val LATEST_RELEASE_API = "https://api.github.com/repos/$GITHUB_OWNER/$GITHUB_REPO/releases/latest"
+        const val LATEST_RELEASE_REDIRECT_URL = "https://github.com/$GITHUB_OWNER/$GITHUB_REPO/releases/latest"
         const val RELEASES_PAGE_URL = "https://github.com/$GITHUB_OWNER/$GITHUB_REPO/releases"
     }
 
@@ -67,12 +68,74 @@ class AppUpdateChecker {
                     latestVersion = normalizeTag(currentVersion),
                     releaseUrl = RELEASES_PAGE_URL
                 )
+                403, 429 -> checkViaLatestRedirectFallback(currentVersion)
+                    ?: AppUpdateState.Error("HTTP $code")
                 else -> AppUpdateState.Error("HTTP $code")
             }
         } catch (e: Exception) {
-            AppUpdateState.Error(e.localizedMessage ?: "Network error")
+            checkViaLatestRedirectFallback(currentVersion)
+                ?: AppUpdateState.Error(e.localizedMessage ?: "Network error")
         } finally {
             conn?.disconnect()
+        }
+    }
+
+    /**
+     * Fallback for carrier-NAT IP rate limits on api.github.com (HTTP 403/429):
+     * GitHub's web /releases/latest returns a 302 redirect to /releases/tag/vX.Y.Z with no API rate limit.
+     */
+    private fun checkViaLatestRedirectFallback(currentVersion: String): AppUpdateState? {
+        var conn: HttpURLConnection? = null
+        return try {
+            conn = (URL(LATEST_RELEASE_REDIRECT_URL).openConnection() as HttpURLConnection).apply {
+                requestMethod = "HEAD"
+                instanceFollowRedirects = false
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("User-Agent", "CarCheck-OTG-Android/$currentVersion")
+            }
+            val code = conn.responseCode
+            val location = conn.getHeaderField("Location").orEmpty()
+            if (code in 300..399 && location.isNotBlank()) {
+                parseRedirectReleaseLocation(location, currentVersion)
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    fun parseRedirectReleaseLocation(locationUrl: String, currentVersion: String): AppUpdateState? {
+        val tagSegment = locationUrl
+            .substringAfter("/releases/tag/", missingDelimiterValue = "")
+            .substringBefore("?")
+            .substringBefore("#")
+            .trim()
+        if (tagSegment.isBlank()) return null
+
+        val normalizedCurrent = normalizeTag(currentVersion)
+        val normalizedLatest = normalizeTag(tagSegment)
+        val releaseUrl = "https://github.com/$GITHUB_OWNER/$GITHUB_REPO/releases/tag/$tagSegment"
+        val apkDownloadUrl = "https://github.com/$GITHUB_OWNER/$GITHUB_REPO/releases/download/$tagSegment/CarCheck-OTG-$tagSegment.apk"
+
+        return if (isNewerVersion(normalizedLatest, normalizedCurrent)) {
+            AppUpdateState.UpdateAvailable(
+                currentVersion = normalizedCurrent,
+                latestVersion = normalizedLatest,
+                releaseTitle = "CarCheck OTG $tagSegment",
+                releaseNotes = "",
+                downloadUrl = apkDownloadUrl,
+                releaseUrl = releaseUrl
+            )
+        } else {
+            AppUpdateState.UpToDate(
+                currentVersion = normalizedCurrent,
+                latestVersion = normalizedLatest,
+                releaseUrl = releaseUrl
+            )
         }
     }
 

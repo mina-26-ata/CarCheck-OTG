@@ -22,8 +22,12 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.PictureAsPdf
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.SystemUpdateAlt
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -35,10 +39,12 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,8 +52,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.carchecker.otg.BuildConfig
+import com.carchecker.otg.data.export.ReportExporter
+import com.carchecker.otg.data.export.SavedPdfResult
 import com.carchecker.otg.data.update.AppUpdateState
+import kotlinx.coroutines.launch
 import com.carchecker.otg.model.AppLanguage
 import com.carchecker.otg.model.DemoProfile
 import com.carchecker.otg.model.FullScanReport
@@ -76,10 +86,77 @@ fun VehicleAndSettingsScreen(
     onDeleteHistoryReport: (String) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val isAr = state.settings.language == AppLanguage.AR
     val report = state.currentReport
     var apiKeyDraft by remember(state.settings.geminiApiKey) { mutableStateOf(state.settings.geminiApiKey) }
     var modelDraft by remember(state.settings.geminiModel) { mutableStateOf(state.settings.geminiModel) }
+    var savedPdfDialog by remember { mutableStateOf<Pair<SavedPdfResult, FullScanReport>?>(null) }
+
+    savedPdfDialog?.let { (saved, savedReport) ->
+        AlertDialog(
+            onDismissRequest = { savedPdfDialog = null },
+            containerColor = CockpitColors.Surface,
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = CockpitColors.HealthyGreen)
+                    Text(
+                        text = if (isAr) "تم تحميل التقرير PDF" else "PDF Report Downloaded",
+                        color = CockpitColors.HealthyGreen,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "${saved.fileName}\n${if (isAr) saved.displayLocationAr else saved.displayLocationEn}",
+                        color = CockpitColors.TextPrimary,
+                        fontSize = 13.sp
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                ReportExporter.openPdfUri(context, saved.uri, state.settings.language)
+                                savedPdfDialog = null
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = CockpitColors.AccentCyan,
+                                contentColor = CockpitColors.BackgroundDeep
+                            ),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text(if (isAr) "فتح" else "Open", fontWeight = FontWeight.Bold)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                ReportExporter.sharePdfUri(context, saved.uri, savedReport, state.settings.language)
+                                savedPdfDialog = null
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text(if (isAr) "مشاركة" else "Share", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { savedPdfDialog = null }) {
+                    Text(if (isAr) "إغلاق" else "Close", fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -429,7 +506,14 @@ fun VehicleAndSettingsScreen(
                     isAr = isAr,
                     strings = strings,
                     onOpen = { onLoadHistoryReport(item) },
-                    onDelete = { onDeleteHistoryReport(item.id) }
+                    onDelete = { onDeleteHistoryReport(item.id) },
+                    onDownloadPdf = {
+                        scope.launch {
+                            val ai = if (item.id == state.currentReport?.id) state.smartAiReport else null
+                            ReportExporter.downloadPdfReport(context, item, ai, state.settings.language)
+                                .onSuccess { savedPdfDialog = it to item }
+                        }
+                    }
                 )
             }
         }

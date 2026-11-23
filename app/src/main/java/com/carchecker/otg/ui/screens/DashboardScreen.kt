@@ -71,6 +71,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.carchecker.otg.data.export.ReportExporter
+import com.carchecker.otg.data.export.SavedPdfResult
 import com.carchecker.otg.domain.analyzer.CarZoneMapper
 import com.carchecker.otg.domain.analyzer.TelemetryEvaluator
 import com.carchecker.otg.domain.analyzer.TelemetryRating
@@ -135,8 +136,164 @@ fun DashboardScreen(
     var showHistorySheet by remember { mutableStateOf(false) }
     var showBluetoothSheet by remember { mutableStateOf(false) }
     var showClearMilDialog by remember { mutableStateOf(false) }
+    var isExportingPdf by remember { mutableStateOf(false) }
+    var savedPdfDialog by remember { mutableStateOf<Pair<SavedPdfResult, FullScanReport>?>(null) }
+    var pdfErrorText by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+
+    fun triggerPdfDownload(targetReport: FullScanReport) {
+        if (isExportingPdf) return
+        scope.launch {
+            isExportingPdf = true
+            val aiForReport = if (targetReport.id == report?.id) state.smartAiReport else null
+            val res = ReportExporter.downloadPdfReport(
+                context = context,
+                report = targetReport,
+                smartAi = aiForReport,
+                lang = state.settings.language
+            )
+            isExportingPdf = false
+            res.onSuccess { saved ->
+                savedPdfDialog = saved to targetReport
+            }.onFailure { err ->
+                pdfErrorText = err.localizedMessage ?: if (isAr) {
+                    "تعذر إنشاء ملف PDF"
+                } else {
+                    "Failed to generate PDF report"
+                }
+            }
+        }
+    }
+
+    savedPdfDialog?.let { (saved, savedReport) ->
+        AlertDialog(
+            onDismissRequest = { savedPdfDialog = null },
+            containerColor = CockpitColors.Surface,
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.CheckCircle,
+                        contentDescription = null,
+                        tint = CockpitColors.HealthyGreen
+                    )
+                    Text(
+                        text = if (isAr) "تم تحميل التقرير PDF" else "PDF Report Downloaded",
+                        color = CockpitColors.HealthyGreen,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = if (isAr) {
+                            "تم حفظ تقرير الفحص بصيغة PDF على جهازك بنجاح."
+                        } else {
+                            "Your diagnostic report PDF has been saved to your device."
+                        },
+                        color = CockpitColors.TextPrimary
+                    )
+                    Surface(
+                        color = CockpitColors.BackgroundDeep,
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, CockpitColors.SurfaceBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = saved.fileName,
+                                color = CockpitColors.AccentCyan,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (isAr) {
+                                    "المجلد: ${saved.displayLocationAr}"
+                                } else {
+                                    "Folder: ${saved.displayLocationEn}"
+                                },
+                                color = CockpitColors.TextSecondary,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                val openRes = ReportExporter.openPdfUri(context, saved.uri, state.settings.language)
+                                if (openRes.isFailure) {
+                                    pdfErrorText = if (isAr) {
+                                        "لا يوجد تطبيق لفتح ملفات PDF على الهاتف — يمكنك مشاركة الملف أو فتحه من مدير الملفات."
+                                    } else {
+                                        "No PDF viewer app found — you can share the file or open it from Files."
+                                    }
+                                }
+                                savedPdfDialog = null
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = CockpitColors.AccentCyan,
+                                contentColor = CockpitColors.BackgroundDeep
+                            ),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text(if (isAr) "فتح PDF" else "Open PDF", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                ReportExporter.sharePdfUri(context, saved.uri, savedReport, state.settings.language)
+                                savedPdfDialog = null
+                            },
+                            border = BorderStroke(1.dp, CockpitColors.HealthyGreen.copy(alpha = 0.7f)),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Rounded.Share, contentDescription = null, tint = CockpitColors.HealthyGreen, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text(if (isAr) "مشاركة PDF" else "Share PDF", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = CockpitColors.HealthyGreen)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { savedPdfDialog = null }) {
+                    Text(if (isAr) "إغلاق" else "Close", fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
+    pdfErrorText?.let { errMsg ->
+        AlertDialog(
+            onDismissRequest = { pdfErrorText = null },
+            containerColor = CockpitColors.Surface,
+            title = {
+                Text(
+                    text = if (isAr) "تنبيه PDF" else "PDF Notice",
+                    color = CockpitColors.WarningAmber,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = { Text(errMsg, color = CockpitColors.TextPrimary) },
+            confirmButton = {
+                TextButton(onClick = { pdfErrorText = null }) {
+                    Text(if (isAr) "حسناً" else "OK", fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
 
     if (showClearMilDialog) {
         AlertDialog(
@@ -174,7 +331,11 @@ fun DashboardScreen(
                 onLoadHistoryReport(selected)
                 scope.launch { listState.animateScrollToItem(0) }
             },
-            onDeleteReport = onDeleteHistoryReport
+            onDeleteReport = onDeleteHistoryReport,
+            onDownloadPdf = { histReport ->
+                showHistorySheet = false
+                triggerPdfDownload(histReport)
+            }
         )
     }
 
@@ -360,6 +521,39 @@ fun DashboardScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = { triggerPdfDownload(report) },
+                        enabled = !isExportingPdf,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = CockpitColors.HealthyGreen,
+                            contentColor = CockpitColors.BackgroundDeep
+                        ),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 46.dp)
+                    ) {
+                        if (isExportingPdf) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = CockpitColors.BackgroundDeep
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = if (isAr) "جاري تجهيز ملف PDF..." else "Generating PDF...",
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        } else {
+                            Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = strings.exportPdfBtn,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
@@ -795,15 +989,17 @@ fun DashboardScreen(
                                     Text(strings.exportShareBtn, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                 }
                                 OutlinedButton(
-                                    onClick = { ReportExporter.printOrSavePdf(context, report, state.settings.language) },
+                                    onClick = { triggerPdfDownload(report) },
+                                    enabled = !isExportingPdf,
+                                    border = BorderStroke(1.dp, CockpitColors.HealthyGreen.copy(alpha = 0.65f)),
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                                     modifier = Modifier
                                         .weight(1f)
                                         .heightIn(min = 44.dp)
                                 ) {
-                                    Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, tint = CockpitColors.HealthyGreen, modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(5.dp))
-                                    Text(strings.exportPdfBtn, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(strings.exportPdfBtn, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = CockpitColors.HealthyGreen)
                                 }
                             }
                         }

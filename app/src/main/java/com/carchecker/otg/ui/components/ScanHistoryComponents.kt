@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DirectionsCar
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.OpenInNew
+import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -84,7 +85,8 @@ fun ScanHistoryBottomSheet(
     strings: AppStrings,
     onDismiss: () -> Unit,
     onSelectReport: (FullScanReport) -> Unit,
-    onDeleteReport: (String) -> Unit
+    onDeleteReport: (String) -> Unit,
+    onDownloadPdf: ((FullScanReport) -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -161,7 +163,8 @@ fun ScanHistoryBottomSheet(
                                 onSelectReport(item)
                                 onDismiss()
                             },
-                            onDelete = { onDeleteReport(item.id) }
+                            onDelete = { onDeleteReport(item.id) },
+                            onDownloadPdf = onDownloadPdf?.let { cb -> { cb(item) } }
                         )
                     }
                 }
@@ -179,6 +182,7 @@ fun ScanHistoryItemCard(
     strings: AppStrings,
     onOpen: () -> Unit,
     onDelete: () -> Unit,
+    onDownloadPdf: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val haptics = LocalHapticFeedback.current
@@ -232,6 +236,23 @@ fun ScanHistoryItemCard(
                         Icon(Icons.Rounded.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(strings.openScanAction, fontWeight = FontWeight.Bold)
+                    }
+                    if (onDownloadPdf != null) {
+                        Button(
+                            onClick = {
+                                showLongPressDialog = false
+                                onDownloadPdf()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = CockpitColors.HealthyGreen,
+                                contentColor = CockpitColors.BackgroundDeep
+                            )
+                        ) {
+                            Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(strings.exportPdfBtn, fontWeight = FontWeight.ExtraBold)
+                        }
                     }
                     OutlinedButton(
                         onClick = {

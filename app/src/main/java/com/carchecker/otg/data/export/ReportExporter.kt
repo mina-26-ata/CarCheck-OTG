@@ -1,20 +1,166 @@
 package com.carchecker.otg.data.export
 
+import android.content.ClipData
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.print.PrintAttributes
 import android.print.PrintManager
+import android.provider.MediaStore
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.core.content.FileProvider
 import com.carchecker.otg.model.AppLanguage
 import com.carchecker.otg.model.FullScanReport
+import com.carchecker.otg.model.SmartAiReport
 import com.carchecker.otg.ui.components.dtcStatusLabel
 import com.carchecker.otg.ui.components.observationSeverityLabel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+data class SavedPdfResult(
+    val fileName: String,
+    val uri: Uri,
+    val displayLocationAr: String,
+    val displayLocationEn: String
+)
+
 object ReportExporter {
+
+    private const val PDF_MIME = "application/pdf"
+    private const val DOWNLOAD_SUBFOLDER = "CarCheck-OTG"
+
+    /**
+     * Generates a native A4 multi-page PDF report and saves it directly to the device Downloads folder
+     * (Android 10+ via MediaStore Downloads -> Downloads/CarCheck-OTG, Android 8-9 via app Downloads folder).
+     */
+    suspend fun downloadPdfReport(
+        context: Context,
+        report: FullScanReport,
+        smartAi: SmartAiReport?,
+        lang: AppLanguage
+    ): Result<SavedPdfResult> = withContext(Dispatchers.IO) {
+        try {
+            val fileName = File(PdfReportContentBuilder.buildSafePdfFileName(report)).name
+            val structured = PdfReportContentBuilder.build(report, smartAi, lang)
+            val pdfBytes = PdfReportGenerator.generatePdfBytes(structured)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                saveToMediaStoreDownloads(context, fileName, pdfBytes)?.let { uri ->
+                    return@withContext Result.success(
+                        SavedPdfResult(
+                            fileName = fileName,
+                            uri = uri,
+                            displayLocationAr = "التنزيلات / $DOWNLOAD_SUBFOLDER",
+                            displayLocationEn = "Downloads / $DOWNLOAD_SUBFOLDER"
+                        )
+                    )
+                }
+            }
+
+            // Android 8-9 (API 26-28) or OEM MediaStore fallback: save in app Downloads + expose via FileProvider
+            val uri = saveToAppDownloadsFileProvider(context, fileName, pdfBytes)
+            Result.success(
+                SavedPdfResult(
+                    fileName = fileName,
+                    uri = uri,
+                    displayLocationAr = "ملفات التطبيق / $DOWNLOAD_SUBFOLDER",
+                    displayLocationEn = "App Downloads / $DOWNLOAD_SUBFOLDER"
+                )
+            )
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun saveToMediaStoreDownloads(
+        context: Context,
+        fileName: String,
+        pdfBytes: ByteArray
+    ): Uri? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, PDF_MIME)
+            put(
+                MediaStore.MediaColumns.RELATIVE_PATH,
+                "${Environment.DIRECTORY_DOWNLOADS}/$DOWNLOAD_SUBFOLDER"
+            )
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+        return try {
+            resolver.openOutputStream(uri)?.use { out ->
+                out.write(pdfBytes)
+                out.flush()
+            } ?: throw IOException("Unable to open Downloads output stream")
+
+            val doneValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.IS_PENDING, 0)
+            }
+            resolver.update(uri, doneValues, null, null)
+            uri
+        } catch (_: Exception) {
+            runCatching { resolver.delete(uri, null, null) }
+            null
+        }
+    }
+
+    private fun saveToAppDownloadsFileProvider(
+        context: Context,
+        fileName: String,
+        pdfBytes: ByteArray
+    ): Uri {
+        val baseDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: File(context.cacheDir, "reports")
+        val targetDir = File(baseDir, DOWNLOAD_SUBFOLDER).apply { mkdirs() }
+        val safeName = File(fileName).name
+        val outFile = File(targetDir, safeName)
+        outFile.writeBytes(pdfBytes)
+        return FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            outFile
+        )
+    }
+
+    fun openPdfUri(context: Context, uri: Uri, lang: AppLanguage): Result<Unit> {
+        return runCatching {
+            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, PDF_MIME)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val title = if (lang == AppLanguage.AR) "فتح تقرير الفحص PDF" else "Open PDF Report"
+            context.startActivity(Intent.createChooser(viewIntent, title))
+        }
+    }
+
+    fun sharePdfUri(context: Context, uri: Uri, report: FullScanReport, lang: AppLanguage): Result<Unit> {
+        return runCatching {
+            val subject = if (lang == AppLanguage.AR) {
+                "تقرير فحص السيارة PDF - ${report.vehicleInfo.make ?: "OBD-II"}"
+            } else {
+                "Car Diagnostic PDF Report - ${report.vehicleInfo.make ?: "OBD-II"}"
+            }
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = PDF_MIME
+                putExtra(Intent.EXTRA_SUBJECT, subject)
+                putExtra(Intent.EXTRA_STREAM, uri)
+                clipData = ClipData.newUri(context.contentResolver, subject, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(shareIntent, subject))
+        }
+    }
 
     fun buildPlainTextReport(report: FullScanReport, lang: AppLanguage): String {
         val isAr = lang == AppLanguage.AR

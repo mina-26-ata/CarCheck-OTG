@@ -1,12 +1,14 @@
 package com.carchecker.otg.ui.state
 
 import android.app.Application
+import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carchecker.otg.BuildConfig
 import com.carchecker.otg.CarCheckerApp
 import com.carchecker.otg.data.obd.ObdTransport
 import com.carchecker.otg.data.obd.SimulatedCarTransport
+import com.carchecker.otg.data.update.AppUpdateInstallState
 import com.carchecker.otg.data.update.AppUpdateState
 import com.carchecker.otg.data.usb.UsbElm327Transport
 import com.carchecker.otg.domain.analyzer.CarZoneMapper
@@ -28,6 +30,8 @@ import com.carchecker.otg.model.ScanProgress
 import com.carchecker.otg.model.SmartAiReport
 import com.carchecker.otg.model.UsbAdapterInfo
 import com.carchecker.otg.model.ZoneStatus
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,6 +40,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.File
 
 data class DiagnosticUiState(
     val settings: AppSettings = AppSettings(),
@@ -64,6 +69,7 @@ data class DiagnosticUiState(
     val isAiAnalyzing: Boolean = false,
     val aiError: String? = null,
     val updateState: AppUpdateState = AppUpdateState.Idle,
+    val updateInstallState: AppUpdateInstallState = AppUpdateInstallState.Idle,
     val showUpdateDialog: Boolean = false,
     val toastMessage: String? = null
 )
@@ -80,6 +86,7 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
     private val geminiService = app.geminiService
     private val localAiEngine = app.localAiEngine
     private val updateChecker = app.updateChecker
+    private val updateInstaller = app.updateInstaller
 
     private val _uiState = MutableStateFlow(DiagnosticUiState())
     val uiState: StateFlow<DiagnosticUiState> = _uiState.asStateFlow()
@@ -87,6 +94,7 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
     private var activeTransport: ObdTransport? = null
     private var pendingUsbDeviceId: Int? = null
     private var liveJob: Job? = null
+    private var updateDownloadJob: Job? = null
     private val liveSensorCache = linkedMapOf<String, LiveSensorReading>()
     @Volatile
     private var cockpitFastStreamMode: Boolean = true
@@ -178,7 +186,8 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
 
-        // Automatically check for new app releases silently on startup
+        // Clean stale cached update APKs and silently check for newer releases on startup
+        viewModelScope.launch(Dispatchers.IO) { updateInstaller.cleanupOldApks() }
         checkForUpdatesAutoIfNeeded()
     }
 
@@ -569,6 +578,120 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun startInAppUpdate() {
+        val avail = _uiState.value.updateState as? AppUpdateState.UpdateAvailable ?: return
+        if (_uiState.value.updateInstallState is AppUpdateInstallState.Downloading) return
+
+        // If already downloaded for this version, jump straight to permission check / install
+        val currentInstall = _uiState.value.updateInstallState
+        val existingApk = when (currentInstall) {
+            is AppUpdateInstallState.NeedsInstallPermission -> currentInstall.apkFile.takeIf { it.exists() }
+            is AppUpdateInstallState.InstallerLaunched -> currentInstall.apkFile.takeIf { it.exists() }
+            is AppUpdateInstallState.ReadyToInstall -> currentInstall.apkFile.takeIf { it.exists() }
+            else -> null
+        }
+        if (existingApk != null) {
+            proceedToInstallApk(existingApk, avail.latestVersion)
+            return
+        }
+
+        _uiState.update {
+            it.copy(
+                showUpdateDialog = true,
+                updateInstallState = AppUpdateInstallState.Downloading(0, 0L, -1L)
+            )
+        }
+
+        updateDownloadJob?.cancel()
+        updateDownloadJob = viewModelScope.launch {
+            val result = updateInstaller.downloadApk(
+                downloadUrl = avail.downloadUrl,
+                version = avail.latestVersion
+            ) { percent, downloaded, total ->
+                _uiState.update {
+                    it.copy(
+                        updateInstallState = AppUpdateInstallState.Downloading(percent, downloaded, total)
+                    )
+                }
+            }
+
+            result.onSuccess { apkFile ->
+                proceedToInstallApk(apkFile, avail.latestVersion)
+            }.onFailure { err ->
+                if (err is CancellationException) {
+                    _uiState.update { it.copy(updateInstallState = AppUpdateInstallState.Idle) }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            updateInstallState = AppUpdateInstallState.Error(
+                                err.localizedMessage ?: "Failed to download update"
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun proceedToInstallApk(apkFile: File, version: String) {
+        val nextState = if (updateInstaller.canRequestPackageInstalls()) {
+            AppUpdateInstallState.ReadyToInstall(apkFile, version)
+        } else {
+            AppUpdateInstallState.NeedsInstallPermission(apkFile, version)
+        }
+        _uiState.update {
+            it.copy(
+                showUpdateDialog = true,
+                updateInstallState = nextState
+            )
+        }
+    }
+
+    fun cancelInAppUpdate() {
+        updateDownloadJob?.cancel()
+        updateDownloadJob = null
+        _uiState.update { it.copy(updateInstallState = AppUpdateInstallState.Idle) }
+    }
+
+    fun onResumeCheckPendingInstall() {
+        val current = _uiState.value.updateInstallState
+        if (current is AppUpdateInstallState.NeedsInstallPermission &&
+            current.apkFile.exists() &&
+            updateInstaller.canRequestPackageInstalls()
+        ) {
+            _uiState.update {
+                it.copy(
+                    showUpdateDialog = true,
+                    updateInstallState = AppUpdateInstallState.ReadyToInstall(current.apkFile, current.version)
+                )
+            }
+        }
+    }
+
+    fun markInstallerLaunched(apkFile: File, version: String) {
+        _uiState.update {
+            it.copy(updateInstallState = AppUpdateInstallState.InstallerLaunched(apkFile, version))
+        }
+    }
+
+    fun relaunchDownloadedInstaller() {
+        val current = _uiState.value.updateInstallState
+        val target = when (current) {
+            is AppUpdateInstallState.InstallerLaunched -> current.apkFile to current.version
+            is AppUpdateInstallState.NeedsInstallPermission -> current.apkFile to current.version
+            else -> null
+        } ?: return
+        if (target.first.exists()) {
+            proceedToInstallApk(target.first, target.second)
+        } else {
+            startInAppUpdate()
+        }
+    }
+
+    fun createInstallApkIntent(apkFile: File): Intent = updateInstaller.createInstallApkIntent(apkFile)
+
+    fun createUnknownSourcesPermissionIntent(): Intent = updateInstaller.createUnknownSourcesPermissionIntent()
+
     fun setActiveTab(tabIndex: Int) {
         cockpitFastStreamMode = (tabIndex != 3)
     }
@@ -869,6 +992,7 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
     override fun onCleared() {
         super.onCleared()
         liveJob?.cancel()
+        updateDownloadJob?.cancel()
         otgManager.unregister()
         btManager.stopScan()
     }

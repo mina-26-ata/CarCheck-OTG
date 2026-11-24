@@ -252,7 +252,7 @@ data class AppStrings(
             checkingUpdatesLabel = "جاري التحقق من التحديثات...",
             upToDateLabel = "التطبيق محدّث إلى أحدث إصدار",
             updateAvailableLabel = "يتوفر تحديث جديد!",
-            downloadUpdateBtn = "تنزيل التحديث الآن"
+            downloadUpdateBtn = "تحديث الآن"
         )
 
         private val English = AppStrings(
@@ -375,7 +375,7 @@ data class AppStrings(
             checkingUpdatesLabel = "Checking GitHub releases...",
             upToDateLabel = "App is up to date",
             updateAvailableLabel = "New Update Available!",
-            downloadUpdateBtn = "Download Update"
+            downloadUpdateBtn = "Update Now"
         )
     }
 }

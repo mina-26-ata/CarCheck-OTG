@@ -3,6 +3,9 @@
     <cache-path
         name="pdf_cache"
         path="reports/" />
+    <cache-path
+        name="apk_updates"
+        path="updates/" />
     <external-files-path
         name="pdf_downloads"
         path="Download/" />

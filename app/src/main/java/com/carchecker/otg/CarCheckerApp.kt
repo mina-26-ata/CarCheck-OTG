@@ -9,6 +9,7 @@ import com.carchecker.otg.data.obd.ObdCommandEngine
 import com.carchecker.otg.data.storage.ScanHistoryRepository
 import com.carchecker.otg.data.storage.SettingsStore
 import com.carchecker.otg.data.update.AppUpdateChecker
+import com.carchecker.otg.data.update.AppUpdateInstaller
 import com.carchecker.otg.data.usb.UsbOtgManager
 import com.carchecker.otg.domain.analyzer.VehicleHealthAnalyzer
 
@@ -34,6 +35,8 @@ class CarCheckerApp : Application() {
         private set
     lateinit var updateChecker: AppUpdateChecker
         private set
+    lateinit var updateInstaller: AppUpdateInstaller
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -47,5 +50,6 @@ class CarCheckerApp : Application() {
         geminiService = GeminiDiagnosticService()
         localAiEngine = LocalAiDiagnosticEngine()
         updateChecker = AppUpdateChecker()
+        updateInstaller = AppUpdateInstaller(this)
     }
 }

@@ -2,6 +2,7 @@ package com.carchecker.otg
 
 import com.carchecker.otg.data.update.AppUpdateChecker
 import com.carchecker.otg.data.update.AppUpdateState
+import com.carchecker.otg.data.update.UpdateSecurityValidator
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -68,5 +69,37 @@ class AppUpdateCheckerTest {
 
         val same = checker.parseRedirectReleaseLocation(location, "1.4.0")
         assertTrue(same is AppUpdateState.UpToDate)
+    }
+
+    @Test
+    fun updateSecurityValidator_enforcesHttpsGitHubHostsAndApkMagicHeader() {
+        assertTrue(
+            UpdateSecurityValidator.isAllowedDownloadUrl(
+                "https://github.com/mina-26-ata/CarCheck-OTG/releases/download/v1.6.0/CarCheck-OTG-v1.6.0.apk"
+            )
+        )
+        assertTrue(
+            UpdateSecurityValidator.isAllowedDownloadUrl(
+                "https://objects.githubusercontent.com/github-production-release-asset-2e65be/abc123"
+            )
+        )
+        assertTrue(
+            UpdateSecurityValidator.isAllowedDownloadUrl(
+                "https://release-assets.githubusercontent.com/github-production-release-asset/test.apk"
+            )
+        )
+        // Reject HTTP, untrusted domains, and spoofed suffixes
+        assertFalse(
+            UpdateSecurityValidator.isAllowedDownloadUrl(
+                "http://github.com/mina-26-ata/CarCheck-OTG/releases/download/v1.6.0/CarCheck-OTG-v1.6.0.apk"
+            )
+        )
+        assertFalse(UpdateSecurityValidator.isAllowedDownloadUrl("https://evil.example.com/fake.apk"))
+        assertFalse(UpdateSecurityValidator.isAllowedDownloadUrl("https://github.com.evil.com/fake.apk"))
+
+        // APK ZIP header check (PK\x03\x04)
+        assertTrue(UpdateSecurityValidator.isValidApkHeader(byteArrayOf(0x50, 0x4B, 0x03, 0x04, 0x14)))
+        assertFalse(UpdateSecurityValidator.isValidApkHeader("<html>404</html>".toByteArray()))
+        assertEquals("CarCheck-OTG-v1.6.0.apk", UpdateSecurityValidator.buildSafeApkFileName("v1.6.0"))
     }
 }

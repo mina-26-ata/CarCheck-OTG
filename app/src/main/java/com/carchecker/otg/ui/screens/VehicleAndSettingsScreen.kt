@@ -82,6 +82,7 @@ fun VehicleAndSettingsScreen(
     onSetDemoProfile: (DemoProfile) -> Unit,
     onSaveGeminiConfig: (String, String) -> Unit,
     onCheckForUpdates: () -> Unit,
+    onStartInAppUpdate: () -> Unit,
     onLoadHistoryReport: (FullScanReport) -> Unit,
     onDeleteHistoryReport: (String) -> Unit
 ) {
@@ -408,11 +409,7 @@ fun VehicleAndSettingsScreen(
                         }
                         Spacer(Modifier.height(8.dp))
                         Button(
-                            onClick = {
-                                runCatching {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(upd.downloadUrl)))
-                                }
-                            },
+                            onClick = onStartInAppUpdate,
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = CockpitColors.HealthyGreen,
@@ -422,7 +419,7 @@ fun VehicleAndSettingsScreen(
                                 .fillMaxWidth()
                                 .heightIn(min = 46.dp)
                         ) {
-                            Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Rounded.SystemUpdateAlt, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(strings.downloadUpdateBtn, fontWeight = FontWeight.ExtraBold)
                         }

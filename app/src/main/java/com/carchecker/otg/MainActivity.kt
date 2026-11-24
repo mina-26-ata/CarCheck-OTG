@@ -42,6 +42,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -73,8 +74,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.carchecker.otg.data.update.AppUpdateInstallState
 import com.carchecker.otg.data.update.AppUpdateState
 import com.carchecker.otg.model.AppLanguage
+import java.util.Locale
 import com.carchecker.otg.model.ConnectionMode
 import com.carchecker.otg.model.ObservationSeverity
 import com.carchecker.otg.ui.i18n.AppStrings
@@ -106,6 +109,11 @@ class MainActivity : ComponentActivity() {
         viewModel.checkForUpdatesAutoIfNeeded()
     }
 
+    override fun onResume() {
+        super.onResume()
+        viewModel.onResumeCheckPendingInstall()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         viewModel.refreshUsbDevices()
@@ -124,9 +132,19 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
     var showHelpDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val availableUpdate = state.updateState as? AppUpdateState.UpdateAvailable
+    val installState = state.updateInstallState
 
     LaunchedEffect(selectedTab) {
         viewModel.setActiveTab(selectedTab)
+    }
+
+    LaunchedEffect(installState) {
+        if (installState is AppUpdateInstallState.ReadyToInstall) {
+            runCatching {
+                context.startActivity(viewModel.createInstallApkIntent(installState.apkFile))
+            }
+            viewModel.markInstallerLaunched(installState.apkFile, installState.version)
+        }
     }
 
     LaunchedEffect(state.toastMessage) {
@@ -173,8 +191,11 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
         }
 
         if (state.showUpdateDialog && availableUpdate != null) {
+            val isDownloading = installState is AppUpdateInstallState.Downloading
             AlertDialog(
-                onDismissRequest = { viewModel.dismissUpdateDialog() },
+                onDismissRequest = {
+                    if (!isDownloading) viewModel.dismissUpdateDialog()
+                },
                 containerColor = CockpitColors.Surface,
                 title = {
                     Row(
@@ -187,7 +208,11 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
                             tint = CockpitColors.HealthyGreen
                         )
                         Text(
-                            text = strings.updateAvailableLabel,
+                            text = if (isDownloading) {
+                                if (isAr) "جاري التحديث التلقائي..." else "Updating App..."
+                            } else {
+                                strings.updateAvailableLabel
+                            },
                             color = CockpitColors.HealthyGreen,
                             fontWeight = FontWeight.ExtraBold
                         )
@@ -197,51 +222,181 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
                             text = if (isAr) {
-                                "تم اكتشاف إصدار أحدث من التطبيق تلقائياً.\nالإصدار الحالي: v${availableUpdate.currentVersion}  •  الإصدار الجديد: v${availableUpdate.latestVersion}"
+                                "الإصدار الحالي: v${availableUpdate.currentVersion}  •  الإصدار الجديد: v${availableUpdate.latestVersion}"
                             } else {
-                                "A newer version of CarCheck OTG is ready.\nCurrent: v${availableUpdate.currentVersion}  •  New: v${availableUpdate.latestVersion}"
+                                "Current: v${availableUpdate.currentVersion}  •  New: v${availableUpdate.latestVersion}"
                             },
                             color = CockpitColors.TextPrimary,
-                            fontSize = 13.5.sp
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.SemiBold
                         )
-                        if (availableUpdate.releaseNotes.isNotBlank()) {
-                            Surface(
-                                color = CockpitColors.BackgroundDeep,
-                                shape = RoundedCornerShape(10.dp),
-                                border = BorderStroke(1.dp, CockpitColors.SurfaceBorder),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
+
+                        when (installState) {
+                            is AppUpdateInstallState.Downloading -> {
+                                val dlMb = installState.downloadedBytes / (1024.0 * 1024.0)
+                                val totMb = if (installState.totalBytes > 0L) {
+                                    installState.totalBytes / (1024.0 * 1024.0)
+                                } else {
+                                    0.0
+                                }
+                                val progressText = if (totMb > 0.0) {
+                                    if (isAr) {
+                                        "جاري تجهيز التحديث داخل التطبيق... ${installState.progressPercent}% (${String.format(Locale.US, "%.1f / %.1f MB", dlMb, totMb)})"
+                                    } else {
+                                        "Preparing update in-app... ${installState.progressPercent}% (${String.format(Locale.US, "%.1f / %.1f MB", dlMb, totMb)})"
+                                    }
+                                } else {
+                                    if (isAr) "جاري تجهيز التحديث داخل التطبيق..." else "Preparing update in-app..."
+                                }
                                 Text(
-                                    text = availableUpdate.releaseNotes.take(420),
-                                    color = CockpitColors.TextSecondary,
-                                    fontSize = 12.sp,
-                                    modifier = Modifier.padding(10.dp)
+                                    text = progressText,
+                                    color = CockpitColors.AccentCyan,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Bold
                                 )
+                                if (installState.totalBytes > 0L) {
+                                    LinearProgressIndicator(
+                                        progress = { (installState.progressPercent / 100f).coerceIn(0f, 1f) },
+                                        color = CockpitColors.HealthyGreen,
+                                        trackColor = CockpitColors.BackgroundDeep,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                } else {
+                                    LinearProgressIndicator(
+                                        color = CockpitColors.HealthyGreen,
+                                        trackColor = CockpitColors.BackgroundDeep,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+                            is AppUpdateInstallState.NeedsInstallPermission -> {
+                                Surface(
+                                    color = CockpitColors.WarningAmber.copy(alpha = 0.14f),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, CockpitColors.WarningAmber.copy(alpha = 0.55f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = if (isAr) {
+                                            "تم تجهيز التحديث بنجاح! لمرة واحدة فقط: فعّل «السماح بتثبيت التطبيقات من هذا المصدر» ثم اضغط رجوع، وسيفتح مثبّت التحديث تلقائياً."
+                                        } else {
+                                            "Update is ready! One-time step: enable 'Allow from this source' and press Back — the installer will launch automatically."
+                                        },
+                                        color = CockpitColors.TextPrimary,
+                                        fontSize = 12.5.sp,
+                                        modifier = Modifier.padding(10.dp)
+                                    )
+                                }
+                            }
+                            is AppUpdateInstallState.InstallerLaunched, is AppUpdateInstallState.ReadyToInstall -> {
+                                Text(
+                                    text = if (isAr) {
+                                        "تم تجهيز التحديث وفتح شاشة التثبيت. اضغط «تحديث» في نافذة النظام لإتمام الترقية."
+                                    } else {
+                                        "Update ready — confirm 'Update' in the Android installer prompt to finish."
+                                    },
+                                    color = CockpitColors.HealthyGreen,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            is AppUpdateInstallState.Error -> {
+                                Text(
+                                    text = if (isAr) {
+                                        "تعذر تجهيز التحديث: ${installState.message}"
+                                    } else {
+                                        "Update failed: ${installState.message}"
+                                    },
+                                    color = CockpitColors.CriticalRed,
+                                    fontSize = 12.5.sp
+                                )
+                            }
+                            else -> {
+                                if (availableUpdate.releaseNotes.isNotBlank()) {
+                                    Surface(
+                                        color = CockpitColors.BackgroundDeep,
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(1.dp, CockpitColors.SurfaceBorder),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = availableUpdate.releaseNotes.take(420),
+                                            color = CockpitColors.TextSecondary,
+                                            fontSize = 12.sp,
+                                            modifier = Modifier.padding(10.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
                 },
                 confirmButton = {
-                    Button(
-                        onClick = {
-                            viewModel.dismissUpdateDialog()
-                            runCatching {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(availableUpdate.downloadUrl)))
+                    when (installState) {
+                        is AppUpdateInstallState.Downloading -> {
+                            TextButton(onClick = { viewModel.cancelInAppUpdate() }) {
+                                Text(if (isAr) "إلغاء" else "Cancel", color = CockpitColors.CriticalRed, fontWeight = FontWeight.Bold)
                             }
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = CockpitColors.HealthyGreen,
-                            contentColor = CockpitColors.BackgroundDeep
-                        )
-                    ) {
-                        Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(strings.downloadUpdateBtn, fontWeight = FontWeight.ExtraBold)
+                        }
+                        is AppUpdateInstallState.NeedsInstallPermission -> {
+                            Button(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(viewModel.createUnknownSourcesPermissionIntent())
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = CockpitColors.HealthyGreen,
+                                    contentColor = CockpitColors.BackgroundDeep
+                                )
+                            ) {
+                                Text(
+                                    text = if (isAr) "السماح والمتابعة" else "Allow & Continue",
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+                        is AppUpdateInstallState.InstallerLaunched -> {
+                            Button(
+                                onClick = { viewModel.relaunchDownloadedInstaller() },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = CockpitColors.HealthyGreen,
+                                    contentColor = CockpitColors.BackgroundDeep
+                                )
+                            ) {
+                                Text(
+                                    text = if (isAr) "فتح التثبيت مجدداً" else "Install Update",
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+                        else -> {
+                            Button(
+                                onClick = { viewModel.startInAppUpdate() },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = CockpitColors.HealthyGreen,
+                                    contentColor = CockpitColors.BackgroundDeep
+                                )
+                            ) {
+                                Icon(Icons.Rounded.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = if (installState is AppUpdateInstallState.Error) {
+                                        if (isAr) "إعادة المحاولة" else "Retry"
+                                    } else {
+                                        strings.downloadUpdateBtn
+                                    },
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { viewModel.dismissUpdateDialog() }) {
-                        Text(if (isAr) "لاحقاً" else "Later", color = CockpitColors.TextSecondary)
+                    if (!isDownloading) {
+                        TextButton(onClick = { viewModel.dismissUpdateDialog() }) {
+                            Text(if (isAr) "لاحقاً" else "Later", color = CockpitColors.TextSecondary)
+                        }
                     }
                 }
             )
@@ -331,10 +486,17 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
                                         modifier = Modifier.size(16.dp)
                                     )
                                     Text(
-                                        text = if (isAr) {
-                                            "يتوفر تحديث جديد (v${availableUpdate.latestVersion}) — اضغط للتنزيل"
-                                        } else {
-                                            "Update v${availableUpdate.latestVersion} available — Tap to download"
+                                        text = when (installState) {
+                                            is AppUpdateInstallState.Downloading -> if (isAr) {
+                                                "جاري تحديث التطبيق (${installState.progressPercent}%)..."
+                                            } else {
+                                                "Updating app (${installState.progressPercent}%)..."
+                                            }
+                                            else -> if (isAr) {
+                                                "يتوفر تحديث جديد (v${availableUpdate.latestVersion}) — اضغط للتحديث الآن"
+                                            } else {
+                                                "Update v${availableUpdate.latestVersion} available — Tap to update"
+                                            }
                                         },
                                         color = CockpitColors.HealthyGreen,
                                         fontSize = 12.sp,
@@ -494,6 +656,7 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
                         onSetDemoProfile = viewModel::setDemoProfile,
                         onSaveGeminiConfig = viewModel::saveGeminiConfig,
                         onCheckForUpdates = { viewModel.checkForUpdates(silent = false) },
+                        onStartInAppUpdate = viewModel::startInAppUpdate,
                         onLoadHistoryReport = {
                             viewModel.selectHistoryReport(it)
                             selectedTab = 0

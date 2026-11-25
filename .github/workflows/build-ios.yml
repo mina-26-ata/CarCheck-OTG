@@ -1,0 +1,74 @@
+name: Build iOS IPA
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/build-ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-ipa:
+    name: Build Unsigned iOS IPA (Xcode + macOS)
+    runs-on: macos-14
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Generate Xcode Project with XcodeGen
+        working-directory: ios
+        run: |
+          if ! command -v xcodegen &> /dev/null; then
+            brew install xcodegen
+          fi
+          xcodegen generate
+
+      - name: Run iOS Unit Tests on Simulator
+        working-directory: ios
+        run: |
+          SIM_ID=$(xcrun simctl list devices available | grep -Eo "iPhone [^()]+\([0-9A-F-]{36}\)" | head -n 1 | grep -Eo "[0-9A-F-]{36}")
+          echo "Running XCTest on Simulator UDID: $SIM_ID"
+          xcodebuild test \
+            -project CarCheckIOS.xcodeproj \
+            -scheme CarCheckIOS \
+            -destination "platform=iOS Simulator,id=$SIM_ID" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Build Release iOS App & Package .ipa
+        working-directory: ios
+        run: |
+          xcodebuild clean build \
+            -project CarCheckIOS.xcodeproj \
+            -scheme CarCheckIOS \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build_ios \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
+
+          mkdir -p Payload
+          cp -R build_ios/Build/Products/Release-iphoneos/CarCheckIOS.app Payload/
+          zip -qry CarCheck-iOS-v1.7.0.ipa Payload
+          ls -lh CarCheck-iOS-v1.7.0.ipa
+
+      - name: Upload IPA Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CarCheck-iOS-v1.7.0-IPA
+          path: ios/CarCheck-iOS-v1.7.0.ipa
+
+      - name: Attach IPA to GitHub Release v1.7.0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view v1.7.0 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload v1.7.0 ios/CarCheck-iOS-v1.7.0.ipa --repo "${{ github.repository }}" --clobber
+            echo "Attached CarCheck-iOS-v1.7.0.ipa to Release v1.7.0"
+          fi

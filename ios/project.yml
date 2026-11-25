@@ -1,0 +1,72 @@
+name: CarCheckIOS
+options:
+  bundleIdPrefix: com.carchecker
+  deploymentTarget:
+    iOS: "16.0"
+  developmentLanguage: ar
+  xcodeVersion: "15.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "1.7.0"
+    CURRENT_PROJECT_VERSION: "8"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    SUPPORTS_MACCATALYST: NO
+
+targets:
+  CarCheckIOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: CarCheckIOS
+        excludes:
+          - "Resources/**"
+      - path: CarCheckIOS/Resources/dtc_database.json
+        buildPhase: resources
+    info:
+      path: CarCheckIOS/Info.plist
+      properties:
+        CFBundleDisplayName: "فاحص السيارة"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        UILaunchScreen:
+          UIColorName: ""
+        UIUserInterfaceStyle: Dark
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSBluetoothAlwaysUsageDescription: "يحتاج التطبيق إلى البلوتوث للاتصال بقطعة فحص السيارة OBD-II (BLE 4.0) وقراءة الأعطال والمؤشرات الحية."
+        NSBluetoothPeripheralUsageDescription: "يحتاج التطبيق إلى البلوتوث للاتصال بقطعة فحص السيارة OBD-II."
+        NSLocalNetworkUsageDescription: "يحتاج التطبيق إلى الشبكة المحلية للاتصال بقطعة فحص السيارة OBD-II عبر الـ Wi-Fi عند اختيارها."
+        LSHasLocalizedDisplayName: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.carchecker.ios
+        PRODUCT_NAME: CarCheckIOS
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
+
+  CarCheckIOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: CarCheckIOSTests
+    dependencies:
+      - target: CarCheckIOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.carchecker.ios.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/CarCheckIOS.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CarCheckIOS"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO

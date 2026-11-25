@@ -25,13 +25,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.HelpOutline
+import androidx.compose.material.icons.rounded.BluetoothConnected
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.DirectionsCar
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Insights
+import androidx.compose.material.icons.rounded.LinkOff
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material.icons.rounded.Usb
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
@@ -79,6 +83,7 @@ import com.carchecker.otg.data.update.AppUpdateState
 import com.carchecker.otg.model.AppLanguage
 import java.util.Locale
 import com.carchecker.otg.model.ConnectionMode
+import com.carchecker.otg.model.ConnectionState
 import com.carchecker.otg.model.ObservationSeverity
 import com.carchecker.otg.ui.i18n.AppStrings
 import com.carchecker.otg.ui.screens.DashboardScreen
@@ -413,10 +418,12 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                val dotColor = when (state.connectionMode) {
-                                    ConnectionMode.USB_OTG, ConnectionMode.BLUETOOTH -> CockpitColors.HealthyGreen
-                                    ConnectionMode.SIMULATION -> CockpitColors.AccentCyan
-                                    ConnectionMode.DISCONNECTED -> CockpitColors.TextSecondary.copy(alpha = 0.5f)
+                                val dotColor = when {
+                                    state.connectionState == ConnectionState.CONNECTED -> CockpitColors.HealthyGreen
+                                    state.connectionState == ConnectionState.CONNECTING ||
+                                        state.connectionState == ConnectionState.REQUESTING_PERMISSION ||
+                                        state.connectionState == ConnectionState.INITIALIZING -> CockpitColors.WarningAmber
+                                    else -> CockpitColors.CriticalRed
                                 }
                                 Box(
                                     modifier = Modifier
@@ -460,6 +467,13 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
                         )
                     )
                     HorizontalDivider(color = CockpitColors.HudGlowBorder.copy(alpha = 0.45f))
+                    PermanentConnectionBanner(
+                        connectionState = state.connectionState,
+                        connectionMode = state.connectionMode,
+                        adapterLabel = state.activeAdapterLabel,
+                        isAr = isAr,
+                        onTapWhenDisconnected = { selectedTab = 0 }
+                    )
                     if (availableUpdate != null) {
                         Surface(
                             color = CockpitColors.HealthyGreen.copy(alpha = 0.16f),
@@ -618,8 +632,8 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
                         onStopBluetoothScan = viewModel::stopBluetoothScan,
                         onConnectBluetooth = viewModel::connectBluetooth,
                         onDisconnect = viewModel::disconnect,
-                        onStartSimulation = { viewModel.startSimulation() },
                         onRunFullScan = viewModel::runFullScan,
+                        onDismissNoConnectionDialog = viewModel::dismissNoConnectionDialog,
                         onToggleLiveStreaming = viewModel::toggleLiveStreaming,
                         onClearDtcs = viewModel::clearDtcs,
                         onSelectZone = viewModel::selectCarZone,
@@ -653,7 +667,6 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
                         onSetLanguage = viewModel::setLanguage,
                         onSetUnit = viewModel::setUnit,
                         onSetBaudRate = viewModel::setPreferredBaudRate,
-                        onSetDemoProfile = viewModel::setDemoProfile,
                         onSaveGeminiConfig = viewModel::saveGeminiConfig,
                         onCheckForUpdates = { viewModel.checkForUpdates(silent = false) },
                         onStartInAppUpdate = viewModel::startInAppUpdate,
@@ -665,6 +678,111 @@ private fun CarCheckerRootScreen(viewModel: DiagnosticViewModel) {
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PermanentConnectionBanner(
+    connectionState: ConnectionState,
+    connectionMode: ConnectionMode,
+    adapterLabel: String,
+    isAr: Boolean,
+    onTapWhenDisconnected: () -> Unit
+) {
+    val isConnected = connectionState == ConnectionState.CONNECTED &&
+        (connectionMode == ConnectionMode.BLUETOOTH || connectionMode == ConnectionMode.USB_OTG)
+    val isConnecting = connectionState == ConnectionState.CONNECTING ||
+        connectionState == ConnectionState.REQUESTING_PERMISSION ||
+        connectionState == ConnectionState.INITIALIZING
+
+    val accentColor = when {
+        isConnected -> CockpitColors.HealthyGreen
+        isConnecting -> CockpitColors.WarningAmber
+        else -> CockpitColors.CriticalRed
+    }
+
+    val bannerIcon = when {
+        isConnected && connectionMode == ConnectionMode.BLUETOOTH -> Icons.Rounded.BluetoothConnected
+        isConnected && connectionMode == ConnectionMode.USB_OTG -> Icons.Rounded.Usb
+        isConnecting -> Icons.Rounded.Sync
+        else -> Icons.Rounded.LinkOff
+    }
+
+    val statusText = when {
+        isConnected -> {
+            val modeText = when (connectionMode) {
+                ConnectionMode.BLUETOOTH -> if (isAr) "عبر البلوتوث" else "via Bluetooth"
+                ConnectionMode.USB_OTG -> if (isAr) "عبر كابل OTG" else "via USB OTG"
+                else -> ""
+            }
+            val suffix = adapterLabel.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty()
+            if (isAr) "متصل بالسيارة $modeText$suffix" else "Connected to Vehicle $modeText$suffix"
+        }
+        isConnecting -> if (isAr) "جاري الاتصال بالسيارة..." else "Connecting to vehicle..."
+        else -> if (isAr) {
+            "غير متصل بالسيارة — وصّل البلوتوث أو كابل OTG"
+        } else {
+            "Not Connected to Vehicle — Connect Bluetooth or USB OTG"
+        }
+    }
+
+    val pillLabel = when {
+        isConnected -> if (isAr) "متصل" else "ONLINE"
+        isConnecting -> if (isAr) "يتصل..." else "WAIT"
+        else -> if (isAr) "غير متصل" else "OFFLINE"
+    }
+
+    Surface(
+        color = accentColor.copy(alpha = 0.14f),
+        modifier = Modifier
+            .fillMaxWidth()
+            .let { mod -> if (!isConnected) mod.clickable { onTapWhenDisconnected() } else mod }
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = bannerIcon,
+                        contentDescription = null,
+                        tint = accentColor,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = statusText,
+                        color = accentColor,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Surface(
+                    color = accentColor.copy(alpha = 0.20f),
+                    shape = RoundedCornerShape(50),
+                    border = BorderStroke(0.8.dp, accentColor.copy(alpha = 0.55f))
+                ) {
+                    Text(
+                        text = pillLabel,
+                        color = accentColor,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                }
+            }
+            HorizontalDivider(color = accentColor.copy(alpha = 0.35f))
         }
     }
 }

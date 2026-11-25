@@ -102,7 +102,7 @@ class ObdCommandEngine(
     suspend fun runFullScan(
         transport: ObdTransport,
         unit: MeasurementUnit,
-        isSimulated: Boolean,
+        isSimulated: Boolean = false,
         onProgress: suspend (ScanProgress) -> Unit
     ): Result<FullScanReport> {
         return try {

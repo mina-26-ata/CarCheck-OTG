@@ -388,9 +388,9 @@ class LocalAiDiagnosticEngine {
 
         if (report == null && focusedDtc == null) {
             return if (isAr) {
-                "قم أولاً بتشغيل «الفحص الشامل» عبر كابل OTG أو وضع المحاكاة حتى أتمكن من تحليل قراءات وأعطال سيارتك بدقة."
+                "قم أولاً بالاتصال بالسيارة عبر البلوتوث أو كابل USB OTG وتشغيل «الفحص الشامل» حتى أتمكن من تحليل قراءات وأعطال سيارتك بدقة."
             } else {
-                "Run a Full Vehicle Scan via USB OTG or Simulation Mode first so I can analyze your car's real fault codes and sensor telemetry."
+                "Connect to your vehicle via Bluetooth or USB OTG and run a Full Vehicle Scan first so I can analyze your car's fault codes and sensor telemetry."
             }
         }
 

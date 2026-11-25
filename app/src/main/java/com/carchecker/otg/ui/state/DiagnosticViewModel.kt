@@ -7,7 +7,6 @@ import androidx.lifecycle.viewModelScope
 import com.carchecker.otg.BuildConfig
 import com.carchecker.otg.CarCheckerApp
 import com.carchecker.otg.data.obd.ObdTransport
-import com.carchecker.otg.data.obd.SimulatedCarTransport
 import com.carchecker.otg.data.update.AppUpdateInstallState
 import com.carchecker.otg.data.update.AppUpdateState
 import com.carchecker.otg.data.usb.UsbElm327Transport
@@ -20,7 +19,6 @@ import com.carchecker.otg.model.CarSubsystemZone
 import com.carchecker.otg.model.CarZoneSummary
 import com.carchecker.otg.model.ConnectionMode
 import com.carchecker.otg.model.ConnectionState
-import com.carchecker.otg.model.DemoProfile
 import com.carchecker.otg.model.DtcKnowledgeEntry
 import com.carchecker.otg.model.DtcSystem
 import com.carchecker.otg.model.FullScanReport
@@ -71,6 +69,7 @@ data class DiagnosticUiState(
     val updateState: AppUpdateState = AppUpdateState.Idle,
     val updateInstallState: AppUpdateInstallState = AppUpdateInstallState.Idle,
     val showUpdateDialog: Boolean = false,
+    val showNoConnectionDialog: Boolean = false,
     val toastMessage: String? = null
 )
 
@@ -170,19 +169,19 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             val history = historyRepo.loadHistory()
             _uiState.update { state ->
-                val activeReport = state.currentReport ?: history.firstOrNull()
-                applyReportDerivedState(
-                    state = state.copy(
-                        scanHistory = history,
-                        currentReport = activeReport,
-                        liveSensors = if (state.liveSensors.isEmpty() && activeReport != null) {
-                            activeReport.sensorSnapshot
-                        } else {
-                            state.liveSensors
-                        }
-                    ),
-                    autoPickZone = true
-                )
+                // Do NOT display a previous scan on launch when no car is connected
+                if (state.connectionState == ConnectionState.CONNECTED) {
+                    state.copy(scanHistory = history)
+                } else {
+                    applyReportDerivedState(
+                        state = state.copy(
+                            scanHistory = history,
+                            currentReport = null,
+                            liveSensors = emptyList()
+                        ),
+                        autoPickZone = false
+                    )
+                }
             }
         }
 
@@ -346,37 +345,6 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun startSimulation(profile: DemoProfile = _uiState.value.settings.demoProfile) {
-        viewModelScope.launch {
-            stopLiveStreaming()
-            userPausedLiveStream = false
-            activeTransport?.disconnect()
-
-            if (profile != _uiState.value.settings.demoProfile) {
-                updateSettings(_uiState.value.settings.copy(demoProfile = profile))
-            }
-
-            val sim = SimulatedCarTransport(profile)
-            _uiState.update {
-                it.copy(
-                    connectionState = ConnectionState.CONNECTING,
-                    connectionError = null
-                )
-            }
-            sim.connect()
-            activeTransport = sim
-            _uiState.update {
-                it.copy(
-                    connectionMode = ConnectionMode.SIMULATION,
-                    connectionState = ConnectionState.CONNECTED,
-                    activeAdapterLabel = sim.description,
-                    connectionError = null
-                )
-            }
-            runFullScan()
-        }
-    }
-
     fun disconnect() {
         viewModelScope.launch {
             stopLiveStreaming()
@@ -384,30 +352,54 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
             activeTransport?.disconnect()
             activeTransport = null
             liveSensorCache.clear()
-            _uiState.update {
-                it.copy(
-                    connectionMode = ConnectionMode.DISCONNECTED,
-                    connectionState = ConnectionState.DISCONNECTED,
-                    activeAdapterLabel = "",
-                    connectionError = null,
-                    isLiveStreaming = false
+            _uiState.update { state ->
+                applyReportDerivedState(
+                    state = state.copy(
+                        connectionMode = ConnectionMode.DISCONNECTED,
+                        connectionState = ConnectionState.DISCONNECTED,
+                        activeAdapterLabel = "",
+                        connectionError = null,
+                        isLiveStreaming = false,
+                        currentReport = null,
+                        liveSensors = emptyList(),
+                        aiChatHistory = emptyList(),
+                        aiError = null
+                    ),
+                    autoPickZone = false
                 )
             }
         }
     }
 
+    fun dismissNoConnectionDialog() {
+        _uiState.update { it.copy(showNoConnectionDialog = false) }
+    }
+
     fun runFullScan() {
-        val transport = activeTransport ?: return
+        val transport = activeTransport
+        if (transport == null || !transport.isConnected || _uiState.value.connectionState != ConnectionState.CONNECTED) {
+            _uiState.update { state ->
+                val isAr = state.settings.language == AppLanguage.AR
+                state.copy(
+                    showNoConnectionDialog = true,
+                    toastMessage = if (isAr) {
+                        "لا يوجد اتصال بالسيارة — يرجى الاتصال عبر البلوتوث أو كابل OTG أولاً"
+                    } else {
+                        "No vehicle connection — please connect via Bluetooth or USB OTG first"
+                    }
+                )
+            }
+            return
+        }
+
         viewModelScope.launch {
             stopLiveStreaming()
 
-            val isSim = _uiState.value.connectionMode == ConnectionMode.SIMULATION
             val unit = _uiState.value.settings.unit
 
             val result = engine.runFullScan(
                 transport = transport,
-                unit = unit,
-                isSimulated = isSim
+                unit = unit
             ) { progress ->
                 _uiState.update { it.copy(scanProgress = progress) }
             }
@@ -953,13 +945,6 @@ class DiagnosticViewModel(application: Application) : AndroidViewModel(applicati
 
     fun setPreferredBaudRate(baud: Int) {
         updateSettings(_uiState.value.settings.copy(preferredBaudRate = baud))
-    }
-
-    fun setDemoProfile(profile: DemoProfile) {
-        updateSettings(_uiState.value.settings.copy(demoProfile = profile))
-        if (_uiState.value.connectionMode == ConnectionMode.SIMULATION) {
-            startSimulation(profile)
-        }
     }
 
     fun saveGeminiConfig(apiKey: String, model: String) {

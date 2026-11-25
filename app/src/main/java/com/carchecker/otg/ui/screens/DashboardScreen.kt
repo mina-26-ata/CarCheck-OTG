@@ -117,8 +117,8 @@ fun DashboardScreen(
     onStopBluetoothScan: () -> Unit,
     onConnectBluetooth: (BluetoothAdapterInfo) -> Unit,
     onDisconnect: () -> Unit,
-    onStartSimulation: () -> Unit,
     onRunFullScan: () -> Unit,
+    onDismissNoConnectionDialog: () -> Unit,
     onToggleLiveStreaming: () -> Unit,
     onClearDtcs: () -> Unit,
     onSelectZone: (CarSubsystemZone?) -> Unit,
@@ -289,6 +289,75 @@ fun DashboardScreen(
             text = { Text(errMsg, color = CockpitColors.TextPrimary) },
             confirmButton = {
                 TextButton(onClick = { pdfErrorText = null }) {
+                    Text(if (isAr) "حسناً" else "OK", fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
+    if (state.showNoConnectionDialog) {
+        AlertDialog(
+            onDismissRequest = onDismissNoConnectionDialog,
+            containerColor = CockpitColors.Surface,
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Warning,
+                        contentDescription = null,
+                        tint = CockpitColors.CriticalRed
+                    )
+                    Text(
+                        text = if (isAr) "لا يوجد اتصال بالسيارة" else "Not Connected to Vehicle",
+                        color = CockpitColors.CriticalRed,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = if (isAr) {
+                            "لا يمكن بدء الفحص حالياً لعدم وجود اتصال نشط بالسيارة.\nيرجى توصيل قطعة الفحص عبر البلوتوث أو كابل USB OTG مع فتح السويتش (ON) ثم المحاولة مجدداً."
+                        } else {
+                            "Cannot start scan because no vehicle connection is active.\nPlease connect via Bluetooth or USB OTG with ignition ON, then try again."
+                        },
+                        color = CockpitColors.TextPrimary,
+                        fontSize = 13.5.sp
+                    )
+                    Button(
+                        onClick = {
+                            onDismissNoConnectionDialog()
+                            showBluetoothSheet = true
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = CockpitColors.HealthyGreen,
+                            contentColor = CockpitColors.BackgroundDeep
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Rounded.Bluetooth, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.connectBluetoothBtn, fontWeight = FontWeight.ExtraBold)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            onDismissNoConnectionDialog()
+                            onConnectUsb(null)
+                        },
+                        border = BorderStroke(1.dp, CockpitColors.AccentCyan.copy(alpha = 0.7f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Rounded.Usb, contentDescription = null, tint = CockpitColors.AccentCyan, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.connectUsbBtn, color = CockpitColors.AccentCyan, fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = onDismissNoConnectionDialog) {
                     Text(if (isAr) "حسناً" else "OK", fontWeight = FontWeight.Bold)
                 }
             }
@@ -495,10 +564,9 @@ fun DashboardScreen(
                                 text = when (state.connectionMode) {
                                     ConnectionMode.USB_OTG -> strings.connectedOtg
                                     ConnectionMode.BLUETOOTH -> strings.connectedBluetooth
-                                    ConnectionMode.SIMULATION -> strings.connectedSim
                                     ConnectionMode.DISCONNECTED -> strings.disconnected
                                 },
-                                color = if (isConnected) CockpitColors.HealthyGreen else CockpitColors.WarningAmber
+                                color = if (isConnected) CockpitColors.HealthyGreen else CockpitColors.CriticalRed
                             )
                             Text(
                                 text = if (isAr) "بانتظار الفحص" else "Awaiting Scan",
@@ -585,7 +653,7 @@ fun DashboardScreen(
                 adapterDescription = report?.adapterDescription ?: state.activeAdapterLabel
             )
             val detectedVehicleName = report?.let { formatVehicleDisplayName(it) }
-                ?: state.activeAdapterLabel.removePrefix("Simulator:").trim().takeIf { it.isNotBlank() }
+                ?: state.activeAdapterLabel.trim().takeIf { it.isNotBlank() }
 
             CarSchematicVisualizer(
                 zoneMap = state.zoneMap,
@@ -605,14 +673,12 @@ fun DashboardScreen(
         item {
             val statusColor = when (state.connectionMode) {
                 ConnectionMode.USB_OTG, ConnectionMode.BLUETOOTH -> CockpitColors.HealthyGreen
-                ConnectionMode.SIMULATION -> CockpitColors.AccentCyan
-                ConnectionMode.DISCONNECTED -> if (state.usbAdapters.isNotEmpty()) CockpitColors.WarningAmber else CockpitColors.TextSecondary
+                ConnectionMode.DISCONNECTED -> if (state.usbAdapters.isNotEmpty()) CockpitColors.WarningAmber else CockpitColors.CriticalRed
             }
             val statusText = when {
                 state.connectionState == ConnectionState.CONNECTING || state.connectionState == ConnectionState.REQUESTING_PERMISSION -> strings.connecting
                 state.connectionMode == ConnectionMode.USB_OTG -> strings.connectedOtg
                 state.connectionMode == ConnectionMode.BLUETOOTH -> strings.connectedBluetooth
-                state.connectionMode == ConnectionMode.SIMULATION -> strings.connectedSim
                 else -> strings.disconnected
             }
 
@@ -629,7 +695,6 @@ fun DashboardScreen(
                     ) {
                         Icon(
                             imageVector = when (state.connectionMode) {
-                                ConnectionMode.SIMULATION -> Icons.Rounded.Radar
                                 ConnectionMode.BLUETOOTH -> Icons.Rounded.BluetoothConnected
                                 else -> Icons.Rounded.Usb
                             },
@@ -702,55 +767,55 @@ fun DashboardScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                if (state.usbAdapters.isNotEmpty() && !isConnected) {
-                    state.usbAdapters.forEach { adapter ->
-                        Surface(
-                            color = CockpitColors.SurfaceElevated,
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.dp, CockpitColors.AccentTeal.copy(alpha = 0.4f)),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 8.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Column {
-                                    Text(
-                                        text = adapter.chipsetLabel,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        fontWeight = FontWeight.Bold,
-                                        color = CockpitColors.TextPrimary
-                                    )
-                                    Text(
-                                        text = "${adapter.deviceName} (VID:${adapter.vendorId} PID:${adapter.productId})",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = CockpitColors.TextSecondary
-                                    )
-                                }
-                                Button(
-                                    onClick = { onConnectUsb(adapter.deviceId) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = CockpitColors.AccentTeal),
-                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(min = 46.dp)
-                                ) {
-                                    Icon(Icons.Rounded.Usb, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(strings.connectUsbBtn, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-                } else if (!isConnected) {
+                if (!isConnected) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        if (state.usbAdapters.isNotEmpty()) {
+                            state.usbAdapters.forEach { adapter ->
+                                Surface(
+                                    color = CockpitColors.SurfaceElevated,
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, CockpitColors.AccentTeal.copy(alpha = 0.4f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Column {
+                                            Text(
+                                                text = adapter.chipsetLabel,
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                fontWeight = FontWeight.Bold,
+                                                color = CockpitColors.TextPrimary
+                                            )
+                                            Text(
+                                                text = "${adapter.deviceName} (VID:${adapter.vendorId} PID:${adapter.productId})",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = CockpitColors.TextSecondary
+                                            )
+                                        }
+                                        Button(
+                                            onClick = { onConnectUsb(adapter.deviceId) },
+                                            colors = ButtonDefaults.buttonColors(containerColor = CockpitColors.AccentTeal),
+                                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(min = 46.dp)
+                                        ) {
+                                            Icon(Icons.Rounded.Usb, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(strings.connectUsbBtn, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         Button(
-                            onClick = onStartSimulation,
+                            onClick = onRunFullScan,
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -760,11 +825,12 @@ fun DashboardScreen(
                                 contentColor = CockpitColors.BackgroundDeep
                             )
                         ) {
-                            Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Rounded.Speed, contentDescription = null, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                text = strings.startSimBtn,
-                                fontWeight = FontWeight.ExtraBold
+                                text = strings.fullScanBtn,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 14.sp
                             )
                         }
                         OutlinedButton(
@@ -783,20 +849,22 @@ fun DashboardScreen(
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        OutlinedButton(
-                            onClick = { onConnectUsb(null) },
-                            border = BorderStroke(1.dp, CockpitColors.AccentCyan.copy(alpha = 0.6f)),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 48.dp)
-                        ) {
-                            Icon(Icons.Rounded.Usb, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = strings.connectUsbBtn,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                        if (state.usbAdapters.isEmpty()) {
+                            OutlinedButton(
+                                onClick = { onConnectUsb(null) },
+                                border = BorderStroke(1.dp, CockpitColors.AccentCyan.copy(alpha = 0.6f)),
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
+                            ) {
+                                Icon(Icons.Rounded.Usb, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = strings.connectUsbBtn,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
                     }
                 } else {

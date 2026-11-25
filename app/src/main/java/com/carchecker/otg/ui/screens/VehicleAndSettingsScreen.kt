@@ -59,7 +59,6 @@ import com.carchecker.otg.data.export.SavedPdfResult
 import com.carchecker.otg.data.update.AppUpdateState
 import kotlinx.coroutines.launch
 import com.carchecker.otg.model.AppLanguage
-import com.carchecker.otg.model.DemoProfile
 import com.carchecker.otg.model.FullScanReport
 import com.carchecker.otg.model.MeasurementUnit
 import com.carchecker.otg.ui.components.CockpitCard
@@ -79,7 +78,6 @@ fun VehicleAndSettingsScreen(
     onSetLanguage: (AppLanguage) -> Unit,
     onSetUnit: (MeasurementUnit) -> Unit,
     onSetBaudRate: (Int) -> Unit,
-    onSetDemoProfile: (DemoProfile) -> Unit,
     onSaveGeminiConfig: (String, String) -> Unit,
     onCheckForUpdates: () -> Unit,
     onStartInAppUpdate: () -> Unit,
@@ -275,30 +273,6 @@ fun VehicleAndSettingsScreen(
                             selected = state.settings.preferredBaudRate == baud,
                             onClick = { onSetBaudRate(baud) },
                             label = { Text(if (baud == 0) strings.baudAuto else "$baud") }
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(12.dp))
-                Text(strings.demoProfileLabel, style = MaterialTheme.typography.titleMedium, color = CockpitColors.TextPrimary)
-                Spacer(Modifier.height(6.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    DemoProfile.entries.forEach { profile ->
-                        val label = when (profile) {
-                            DemoProfile.HEALTHY -> if (isAr) "سيارة سليمة (2022 تويوتا كامري)" else "Healthy Car (2022 Toyota Camry)"
-                            DemoProfile.ENGINE_MISFIRE_FUEL -> if (isAr) "تفتفة وتسريب هواء (P0300 + P0171 + P0420)" else "Engine Misfire & Lean Trim (P0300, P0171)"
-                            DemoProfile.TRANS_ABS_COOLING -> if (isAr) "حرارة وقير وABS وضعف بطارية (P0128 + P0700 + C0035)" else "Cooling, Trans, ABS & Low Battery"
-                        }
-                        FilterChip(
-                            selected = state.settings.demoProfile == profile,
-                            onClick = { onSetDemoProfile(profile) },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = {
-                                Text(
-                                    text = label,
-                                    modifier = Modifier.padding(vertical = 4.dp)
-                                )
-                            }
                         )
                     }
                 }

@@ -19,7 +19,9 @@ class ScanHistoryRepository(context: Context) {
             val json = historyFile.readText(Charsets.UTF_8)
             val type = object : TypeToken<List<FullScanReport>>() {}.type
             val items: List<FullScanReport>? = gson.fromJson(json, type)
-            (items ?: emptyList()).sortedByDescending { it.timestampMs }
+            (items ?: emptyList())
+                .filterNot { it.isSimulated }
+                .sortedByDescending { it.timestampMs }
         } catch (_: Exception) {
             emptyList()
         }

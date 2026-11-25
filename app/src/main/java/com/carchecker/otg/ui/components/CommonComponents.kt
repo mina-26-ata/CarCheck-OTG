@@ -251,8 +251,6 @@ fun localizeCountry(country: String?, isAr: Boolean): String? {
 fun localizeAdapterLabel(raw: String, isAr: Boolean): String {
     if (!isAr || raw.isBlank()) return raw
     return raw
-        .replace("Simulator: 2022 Toyota Camry (Healthy)", "محاكي: تويوتا كامري 2022 (سليمة)")
-        .replace("Simulator: 2019 Hyundai Elantra (Misfire & Fuel Trim)", "محاكي: هيونداي إلنترا 2019 (تفتفة وخلط وقود)")
-        .replace("Simulator: 2017 Ford Explorer (Cooling / Trans / ABS)", "محاكي: فورد إكسبلورر 2017 (حرارة / قير / فرامل)")
-        .replace("Simulator:", "محاكي السيارة:")
+        .replace("Bluetooth", "بلوتوث")
+        .replace("USB", "USB")
 }

@@ -10,17 +10,10 @@ enum class MeasurementUnit {
     IMPERIAL
 }
 
-enum class DemoProfile {
-    HEALTHY,
-    ENGINE_MISFIRE_FUEL,
-    TRANS_ABS_COOLING
-}
-
 enum class ConnectionMode {
     DISCONNECTED,
     USB_OTG,
-    BLUETOOTH,
-    SIMULATION
+    BLUETOOTH
 }
 
 enum class ConnectionState {
@@ -227,7 +220,7 @@ data class VehicleObservation(
 data class FullScanReport(
     val id: String,
     val timestampMs: Long,
-    val isSimulated: Boolean,
+    val isSimulated: Boolean = false,
     val adapterDescription: String,
     val healthScore: Int,
     val vehicleInfo: VehicleInfo,
@@ -259,7 +252,6 @@ data class AppSettings(
     val language: AppLanguage = AppLanguage.AR,
     val unit: MeasurementUnit = MeasurementUnit.METRIC,
     val preferredBaudRate: Int = 0, // 0 = Auto-detect
-    val demoProfile: DemoProfile = DemoProfile.ENGINE_MISFIRE_FUEL,
     val geminiApiKey: String = "",
     val geminiModel: String = "gemini-2.5-flash"
 )

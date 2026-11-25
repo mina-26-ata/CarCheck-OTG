@@ -63,7 +63,7 @@ import java.util.Date
 import java.util.Locale
 
 fun formatVehicleDisplayName(report: FullScanReport): String {
-    val cleanAdapter = report.adapterDescription.removePrefix("Simulator:").trim()
+    val cleanAdapter = report.adapterDescription.trim()
     val makeYear = listOfNotNull(
         report.vehicleInfo.make?.takeIf { it.isNotBlank() && it != "Unknown" },
         report.vehicleInfo.modelYear?.toString()

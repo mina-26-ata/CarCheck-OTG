@@ -91,7 +91,8 @@ enum PdfReportGeneratorIOS {
                 y += 22
             }
 
-            func drawTextCard(_ lines: [NSAttributedString], accent: UIColor, bg: UIColor = cardBg) {
+            func drawTextCard(_ lines: [NSAttributedString], accent: UIColor, bg: UIColor? = nil) {
+                let fillBg = bg ?? cardBg
                 let pad: CGFloat = 10
                 let innerW = contentWidth - pad * 2 - 6
                 let heights = lines.map { ceil($0.boundingRect(with: CGSize(width: innerW, height: 2000), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil).height) }
@@ -100,7 +101,7 @@ enum PdfReportGeneratorIOS {
 
                 let box = CGRect(x: marginX, y: y, width: contentWidth, height: totalH)
                 let path = UIBezierPath(roundedRect: box, cornerRadius: 7)
-                bg.setFill()
+                fillBg.setFill()
                 path.fill()
                 borderCol.setStroke()
                 path.lineWidth = 0.8

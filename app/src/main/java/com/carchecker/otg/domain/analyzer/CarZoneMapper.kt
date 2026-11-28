@@ -178,10 +178,17 @@ object CarZoneMapper {
         adapterDescription: String? = null
     ): VehicleBodyStyle {
         val vin = vehicleInfo?.vin.orEmpty().uppercase()
+        val make = vehicleInfo?.make.orEmpty().trim()
         val combined = listOfNotNull(
             vehicleInfo?.make,
             adapterDescription
         ).joinToString(" ").lowercase()
+
+        // If vehicle identity is unknown (not connected or no VIN/make),
+        // default to the Sportage SUV X-Ray illustration.
+        if (vehicleInfo == null || (vin.isBlank() && make.isBlank() && adapterDescription.isNullOrBlank())) {
+            return VehicleBodyStyle.SUV
+        }
 
         val pickupWmis = setOf("1FT", "1GC", "1GT", "1C6", "5TF", "3TM", "MR0")
         if (vin.take(3) in pickupWmis || listOf(
@@ -218,6 +225,11 @@ object CarZoneMapper {
             ).any { it in combined }
         ) {
             return VehicleBodyStyle.COUPE
+        }
+
+        // If we have no decoded make and no valid VIN prefix, fall back to the default SUV illustration.
+        if (make.isBlank() && vin.length < 3) {
+            return VehicleBodyStyle.SUV
         }
 
         return VehicleBodyStyle.SEDAN

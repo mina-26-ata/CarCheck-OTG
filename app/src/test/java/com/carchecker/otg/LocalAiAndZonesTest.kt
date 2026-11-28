@@ -146,6 +146,11 @@ class LocalAiAndZonesTest {
                 null
             )
         )
+
+        assertEquals(
+            VehicleBodyStyle.SUV,
+            CarZoneMapper.detectBodyStyle(null, null)
+        )
     }
 
     @Test
